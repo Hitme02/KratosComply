@@ -17,4 +17,6 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
 - **Stage B** – Agent detectors, deterministic Merkle tree + signing pipeline, and CLI
   commands for key generation and scanning that emit reproducible `aegis-report.json`
   artifacts from the sample app.
+- **Stage C** – Deterministic patcher that creates sandbox-validated diffs plus CLI
+  support for generating and applying fixes, along with sample patch outputs.
 

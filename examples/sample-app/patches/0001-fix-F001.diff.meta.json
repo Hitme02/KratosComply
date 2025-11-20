@@ -1,0 +1,5 @@
+{
+  "finding_id": "F001",
+  "safe": true,
+  "log": "patching file app.py\npatching file .env.template\n...                                                                      [100%]\n3 passed in 0.01s"
+}

@@ -1,0 +1,15 @@
+--- a/app.py
++++ b/app.py
+@@ -6,7 +6,7 @@
+ 
+ # Intentionally insecure constants for the agent to detect in later stages.
+ PAYMENT_API_TOKEN = "tok_live_51_insecure"
+-DATABASE_PASSWORD = "p@ssw0rd!"
++DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', "p@ssw0rd!")
+ S3_ACL = "public-read"
+ 
+ 
+--- a/.env.template
++++ b/.env.template
+@@ -0,0 +1 @@
++DATABASE_PASSWORD=p@ssw0rd!

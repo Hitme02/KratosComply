@@ -5,7 +5,7 @@ This checklist will be expanded as functionality lands.
 - [x] Stage A scaffold complete
 - [x] Agent CLI supports key generation
 - [x] Agent produces aegis report with deterministic outputs
-- [ ] Patcher + sandbox validated
+- [x] Patcher + sandbox validated
 - [ ] Backend verify and attest endpoints enforce signatures
 - [ ] Frontend demo flow operational
 - [ ] Docker + docker-compose demo works

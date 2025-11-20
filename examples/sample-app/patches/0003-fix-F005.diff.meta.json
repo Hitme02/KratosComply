@@ -1,0 +1,5 @@
+{
+  "finding_id": "F005",
+  "safe": true,
+  "log": "patching file 'infra/bucket.tf'\n...                                                                      [100%]\n3 passed in 0.01s"
+}

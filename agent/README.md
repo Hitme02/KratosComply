@@ -19,5 +19,11 @@ poetry run python -m agent.cli --help
 poetry run python -m agent.cli generate-key
 
 # Scan a workspace and emit a signed Aegis report
-poetry run python -m agent.cli scan ../examples/sample-app --output ../examples/sample-app/aegis-report.json
+poetry run python -m agent.cli scan ../examples/sample-app \
+  --output ../examples/sample-app/aegis-report.json \
+  --generate-patches
+
+# Apply a suggested patch (after reviewing the diff)
+poetry run python -m agent.cli apply-patch ../examples/sample-app/patches/0001-fix-F001.diff \
+  --workspace ../examples/sample-app
 ```

@@ -99,6 +99,10 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
                             snippet=snippet,
                             severity="high",
                             confidence=0.98,
+                            metadata={
+                                "var_name": target.id,
+                                "literal": literal_value,
+                            },
                         )
                     )
     return findings

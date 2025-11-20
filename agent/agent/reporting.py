@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 def generate_report(
     target: Path,
     project_name: str | None,
-) -> tuple[list[Finding], dict[str, Any]]:
+) -> tuple[list[Finding], dict[str, RawFinding], dict[str, Any]]:
     """Scan ``target`` and return finalized findings and report metadata."""
     raw_findings = scan_workspace(target)
-    findings = finalize_findings(raw_findings)
+    findings, raw_lookup = finalize_findings(raw_findings)
     merkle_root = build_merkle_root([f.evidence_hash for f in findings])
 
     report = {
@@ -40,7 +40,7 @@ def generate_report(
         "agent_signature": "",
         "agent_version": AGENT_VERSION,
     }
-    return findings, report
+    return findings, raw_lookup, report
 
 
 def _build_metrics(findings: list[Finding]) -> dict[str, int]:

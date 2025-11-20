@@ -21,7 +21,10 @@ def _expose_submodules() -> None:
         "findings",
         "keystore",
         "merkle",
+        "patch_ops",
+        "patcher",
         "reporting",
+        "sandbox",
         "signature",
     )
     for name in module_names:
