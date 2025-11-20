@@ -1,0 +1,31 @@
+{
+  "report_version": "1.0",
+  "project": {
+    "name": "sample-app",
+    "path": "examples/sample-app",
+    "commit": null,
+    "scan_time": "2025-01-01T00:00:00Z"
+  },
+  "standards": ["SOC2", "ISO27001"],
+  "findings": [
+    {
+      "id": "F001",
+      "type": "hardcoded_secret",
+      "file": "app.py",
+      "line": 8,
+      "snippet": "PAYMENT_API_TOKEN = \"tok_live_51_insecure\"",
+      "severity": "high",
+      "confidence": 0.95,
+      "evidence_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "metrics": {
+    "risk_score": 82,
+    "critical": 0,
+    "high": 1,
+    "medium": 0
+  },
+  "merkle_root": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "agent_signature": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "agent_version": "kratos-agent-demo-0.0"
+}

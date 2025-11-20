@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "kratos-agent"
+version = "0.1.0"
+description = "KratosComply offline-first compliance agent"
+authors = ["KratosComply Team <devnull@example.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "agent" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+click = "^8.1.7"
+typer = "^0.12.3"
+pynacl = "^1.5.0"
+pyyaml = "^6.0.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+ruff = "^0.6.9"
+
+[build-system]
+requires = ["poetry-core>=1.8.1"]
+build-backend = "poetry.core.masonry.api"

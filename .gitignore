@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+.env.*
+.poetry-cache/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+node_modules/
+.next/
+frontend/.next
+frontend/node_modules
+.dist/
+coverage/
+*.sqlite3
