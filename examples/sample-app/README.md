@@ -3,7 +3,7 @@
 This intentionally vulnerable Python application is the target used throughout the KratosComply demo. It includes:
 
 - Hardcoded API tokens and passwords for the agent to detect.
-- A fake public S3 ACL reference (`public-read`).
+- A Terraform bucket definition with a public S3 ACL (`infra/bucket.tf`).
 - Minimal pytest coverage for smoke testing.
 
 ## Running locally

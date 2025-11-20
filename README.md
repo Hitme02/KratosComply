@@ -11,7 +11,10 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
 - `docs/` – Architecture, privacy, and acceptance documentation.
 - `.github/workflows/` – CI skeleton for linting, tests, and builds.
 
-## Stage A Status
+## Stage Progress
 
-Stage A focuses on scaffolding the repo and providing the insecure sample application that later stages will scan and patch. Subsequent stages will add fully functional agent capabilities, backend verification, frontend workflows, Docker support, and documentation.
+- **Stage A** – Repository scaffold, sample insecure application, base docs, and CI shell.
+- **Stage B** – Agent detectors, deterministic Merkle tree + signing pipeline, and CLI
+  commands for key generation and scanning that emit reproducible `aegis-report.json`
+  artifacts from the sample app.
 

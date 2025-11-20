@@ -1,13 +1,23 @@
-# Kratos Agent (Scaffold)
+# Kratos Agent
 
-This directory contains the Python 3.11 agent that will power KratosComply scans.
-
-Stage A provides the Poetry configuration and placeholders for the CLI entry points. Future stages will add detectors, Merkle tree logic, signing, patching, sandboxing, and attestation support.
+The Kratos agent is a privacy-first, deterministic scanner that powers KratosComply.
+Stage B introduces working detectors, Merkle tree generation, ed25519 signing, and CLI
+commands for key generation and scanning.
 
 ## Local setup
 
 ```bash
 cd agent
 poetry install
-poetry run python -m agent.cli --help  # placeholder for future stages
+poetry run python -m agent.cli --help
+```
+
+## Quick commands
+
+```bash
+# Generate offline key pair (stored under ~/.kratos/keys by default)
+poetry run python -m agent.cli generate-key
+
+# Scan a workspace and emit a signed Aegis report
+poetry run python -m agent.cli scan ../examples/sample-app --output ../examples/sample-app/aegis-report.json
 ```

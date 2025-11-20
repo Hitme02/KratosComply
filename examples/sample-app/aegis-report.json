@@ -2,30 +2,74 @@
   "report_version": "1.0",
   "project": {
     "name": "sample-app",
-    "path": "examples/sample-app",
-    "commit": null,
-    "scan_time": "2025-01-01T00:00:00Z"
+    "path": "/Users/user/Desktop/KratosCompliance/examples/sample-app",
+    "commit": "ff5c10debc85d24342a77e99b9b49ec11a9b52bc",
+    "scan_time": "2025-11-20T10:03:55.210494+00:00"
   },
-  "standards": ["SOC2", "ISO27001"],
+  "standards": [
+    "SOC2",
+    "ISO27001"
+  ],
   "findings": [
     {
-      "id": "F001",
       "type": "hardcoded_secret",
       "file": "app.py",
       "line": 8,
       "snippet": "PAYMENT_API_TOKEN = \"tok_live_51_insecure\"",
       "severity": "high",
-      "confidence": 0.95,
-      "evidence_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "confidence": 0.98,
+      "id": "F001",
+      "evidence_hash": "9cee82a183344cd0fc3d655bd99c7abfd190683a9b7db40e685e5b6a1b55bee2"
+    },
+    {
+      "type": "hardcoded_secret",
+      "file": "app.py",
+      "line": 9,
+      "snippet": "DATABASE_PASSWORD = \"p@ssw0rd!\"",
+      "severity": "high",
+      "confidence": 0.98,
+      "id": "F002",
+      "evidence_hash": "b4c54af0d56f1e48ab2c29a3233ce989151a5f626bb41d2645b6305198839984"
+    },
+    {
+      "type": "hardcoded_secret",
+      "file": "app.py",
+      "line": 16,
+      "snippet": "payment_token: str = PAYMENT_API_TOKEN",
+      "severity": "high",
+      "confidence": 0.98,
+      "id": "F003",
+      "evidence_hash": "a2b4325bb31b10fee790663884a95da23e27c80ab1b39fc3987b48ea59b5e3f5"
+    },
+    {
+      "type": "hardcoded_secret",
+      "file": "app.py",
+      "line": 17,
+      "snippet": "db_password: str = DATABASE_PASSWORD",
+      "severity": "high",
+      "confidence": 0.98,
+      "id": "F004",
+      "evidence_hash": "e57b99b00cf2c357927544b55c2b10c5a4bc2d3e893b70940dbc70bf14e42152"
+    },
+    {
+      "type": "insecure_acl",
+      "file": "infra/bucket.tf",
+      "line": 3,
+      "snippet": "acl    = \"public-read\"",
+      "severity": "high",
+      "confidence": 0.9,
+      "id": "F005",
+      "evidence_hash": "fd474a04423d6766dad168e5d0a38ecb96600f449678041726960b9e0803b8db"
     }
   ],
   "metrics": {
-    "risk_score": 82,
     "critical": 0,
-    "high": 1,
-    "medium": 0
+    "high": 5,
+    "medium": 0,
+    "low": 0,
+    "risk_score": 100
   },
-  "merkle_root": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "agent_signature": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "agent_version": "kratos-agent-demo-0.0"
+  "merkle_root": "27ad3a34f07be8871ef1f91538dfe8e4d9c51e8e3860b374df16f7dc6c71d33e",
+  "agent_signature": "45801479ab585bee7080317311cac6e0b8776455c02a57cf4015c4b58cdc40f34c97258e4436816a061638e96b228984ff7605afc93503f64c7cda3fa46b4306",
+  "agent_version": "kratos-agent-demo-0.1"
 }
