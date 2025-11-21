@@ -6,7 +6,7 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
 
 - `agent/` – Python 3.11 agent packaged with Poetry.
 - `backend/` – FastAPI service that verifies signed reports and records attestations.
-- `frontend/` – Next.js + Tailwind UI for uploading reports and viewing attestations.
+- `frontend/` – React + Vite + Tailwind + shadcn/ui dashboard for uploads, verification, and attestations.
 - `examples/sample-app/` – Insecure demo app used to produce sample findings.
 - `docs/` – Architecture, privacy, and acceptance documentation.
 - `.github/workflows/` – CI skeleton for linting, tests, and builds.
@@ -21,4 +21,23 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
   support for generating and applying fixes, along with sample patch outputs.
 - **Stage D** – FastAPI backend with `/verify-report` signature+Merkle checks,
   `/attest` persistence, and pytest coverage for the verification flow.
+- **Stage E** – React + Vite + Tailwind + shadcn/ui frontend that uploads reports,
+  visualises metrics, verifies against the backend, and records attestations with charts.
+
+## Frontend (Stage E)
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173 (expects backend on http://localhost:8000)
+npm run build    # production bundle
+```
+
+Highlights:
+
+- Drag & drop upload of `aegis-report.json` with inline findings preview
+- Verification + attestation workflows wired to `/verify-report` and `/attest`
+- Severity bar + compliance radar charts, risk cards, and status indicators
+- Attestation history table with search-ready UI and pagination shell
+- Dark mode by default, theme toggle, shadcn/ui components, Framer Motion animations
 
