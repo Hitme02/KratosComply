@@ -1,14 +1,22 @@
+import { lazy, Suspense } from "react";
+
 import { EnhancedUpload } from "@/components/EnhancedUpload";
 import { ReportPreview } from "@/components/ReportPreview";
 import { ComplianceSummary } from "@/components/ComplianceSummary";
-import { SeverityBarChart } from "@/components/charts/SeverityBarChart";
-import { ComplianceRadarChart } from "@/components/charts/ComplianceRadarChart";
 import { VerificationPanel } from "@/components/VerificationPanel";
 import { AttestationHistory } from "@/components/AttestationHistory";
 import { useReportStore } from "@/hooks/useReportStore";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
+
+// Lazy load heavy chart components
+const SeverityBarChart = lazy(() =>
+  import("@/components/charts/SeverityBarChart").then((m) => ({ default: m.SeverityBarChart }))
+);
+const ComplianceRadarChart = lazy(() =>
+  import("@/components/charts/ComplianceRadarChart").then((m) => ({ default: m.ComplianceRadarChart }))
+);
 
 export function Dashboard() {
   const { report } = useReportStore();
@@ -43,8 +51,12 @@ export function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-2">
         <ReportPreview />
         <div className="space-y-6">
-          <SeverityBarChart />
-          <ComplianceRadarChart />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-lg bg-muted" />}>
+            <SeverityBarChart />
+          </Suspense>
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-lg bg-muted" />}>
+            <ComplianceRadarChart />
+          </Suspense>
         </div>
       </div>
 

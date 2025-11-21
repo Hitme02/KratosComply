@@ -10,4 +10,18 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Separate vendor chunks
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          "ui-vendor": ["framer-motion"],
+          "chart-vendor": ["recharts"],
+          "utils-vendor": ["axios", "zustand"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1000, // Increase limit to 1MB for better chunking
+  },
 });
