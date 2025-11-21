@@ -1,6 +1,14 @@
-# KratosComply Backend (Stage A)
+# KratosComply Backend
 
-This FastAPI application will verify signed reports and provide a minimal attestation ledger in later stages. Stage A delivers a simple health endpoint and project metadata so the service can run via `uvicorn`.
+The backend now exposes two primary capabilities:
+
+- `POST /verify-report` – verifies the ed25519 signature and recomputes the Merkle
+  root for an `aegis-report.json` produced by the agent.
+- `POST /attest` – records a Merkle root/public-key pair (plus optional metadata) in
+  the local SQLite ledger for demo purposes.
+
+SQLite is used for local development, and the database file defaults to `kratos.db`
+in the backend directory. Override the location with `KRATOS_DB_URL`.
 
 ## Quickstart
 
@@ -9,4 +17,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
 uvicorn main:app --reload
+
+# Run backend unit tests
+pytest -q
 ```

@@ -1,0 +1,2 @@
+"""KratosComply backend package."""
+

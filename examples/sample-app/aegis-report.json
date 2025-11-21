@@ -3,8 +3,8 @@
   "project": {
     "name": "sample-app",
     "path": "/Users/user/Desktop/KratosCompliance/examples/sample-app",
-    "commit": "0c4ca6309a3e0a719bb1dd6a6120117dd16dc73a",
-    "scan_time": "2025-11-20T14:48:10.219519+00:00"
+    "commit": "fc9426054e59a1692e2588f302d2e789fcb58cc8",
+    "scan_time": "2025-11-21T07:51:17.040808+00:00"
   },
   "standards": [
     "SOC2",
@@ -70,6 +70,6 @@
     "risk_score": 100
   },
   "merkle_root": "27ad3a34f07be8871ef1f91538dfe8e4d9c51e8e3860b374df16f7dc6c71d33e",
-  "agent_signature": "0c083a229946a784a35215b71d8fb39ece1c8c776e92cd0b61c1607f75eee104c922dd3eda335d523d22bca094d3e98eebbabde6265d5d16cec6c96cd0051b05",
+  "agent_signature": "f50d28fed7df685008e9455be5dfa571bbe54dc9014b8dfc9c415a49d513703817310f8fa7230dddc1306b1c0fed895e6c3de8dc52e22f015a130c9154c92b09",
   "agent_version": "kratos-agent-demo-0.1"
 }

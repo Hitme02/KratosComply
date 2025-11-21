@@ -19,4 +19,6 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
   artifacts from the sample app.
 - **Stage C** – Deterministic patcher that creates sandbox-validated diffs plus CLI
   support for generating and applying fixes, along with sample patch outputs.
+- **Stage D** – FastAPI backend with `/verify-report` signature+Merkle checks,
+  `/attest` persistence, and pytest coverage for the verification flow.
 
