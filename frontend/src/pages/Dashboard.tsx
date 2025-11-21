@@ -1,4 +1,4 @@
-import { UploadDropzone } from "@/components/UploadDropzone";
+import { EnhancedUpload } from "@/components/EnhancedUpload";
 import { ReportPreview } from "@/components/ReportPreview";
 import { ComplianceSummary } from "@/components/ComplianceSummary";
 import { SeverityBarChart } from "@/components/charts/SeverityBarChart";
@@ -34,7 +34,7 @@ export function Dashboard() {
       </motion.div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <UploadDropzone />
+        <EnhancedUpload />
         <VerificationPanel />
       </div>
 

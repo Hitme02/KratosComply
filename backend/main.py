@@ -6,7 +6,9 @@ import logging
 from typing import Iterable
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from .database import Base, engine, get_db
 from .models import Attestation
@@ -14,6 +16,7 @@ from .schemas import (
     AttestRequest,
     AttestResponse,
     Finding,
+    Report,
     VerifyReportRequest,
     VerifyReportResponse,
 )
@@ -89,3 +92,48 @@ def _ordered_hashes(findings: Iterable[Finding]) -> list[str]:
             ),
         )
     ]
+
+
+# GitHub OAuth endpoints (stub implementation)
+# In production, these would integrate with GitHub OAuth and trigger agent scans
+
+
+class GitHubCallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+@app.get("/api/auth/github")
+def github_auth() -> RedirectResponse:
+    """Initiate GitHub OAuth flow."""
+    # In production: redirect to GitHub OAuth with client_id and state
+    # For demo: redirect to callback with mock code
+    github_client_id = "demo_client_id"  # Replace with actual client ID
+    redirect_uri = "http://localhost:5173/github/callback"
+    state = "demo_state"
+    github_oauth_url = (
+        f"https://github.com/login/oauth/authorize"
+        f"?client_id={github_client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=repo"
+        f"&state={state}"
+    )
+    return RedirectResponse(url=github_oauth_url)
+
+
+@app.post("/github/callback", response_model=Report)
+def github_callback(request: GitHubCallbackRequest) -> Report:
+    """Handle GitHub OAuth callback and return scanned report."""
+    # In production:
+    # 1. Exchange code for access token
+    # 2. Fetch repository info
+    # 3. Trigger agent scan (via queue/worker)
+    # 4. Return report when ready
+    # For demo: return a mock report structure
+    logger.info("GitHub OAuth callback received (code=%s, state=%s)", request.code[:10], request.state)
+    # TODO: Implement actual GitHub integration
+    # For now, return a placeholder that indicates GitHub mode is not yet implemented
+    raise HTTPException(
+        status_code=501,
+        detail="GitHub OAuth integration is not yet implemented. Please use Docker agent mode for now.",
+    )

@@ -32,3 +32,13 @@ export async function fetchAttestations(): Promise<AttestationRecord[]> {
     return [];
   }
 }
+
+export async function fetchGitHubReport(code: string, state: string): Promise<Report> {
+  const { data } = await api.post<Report>("/github/callback", { code, state });
+  return data;
+}
+
+export function getGitHubAuthUrl(): string {
+  const baseURL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+  return `${baseURL}/api/auth/github`;
+}
