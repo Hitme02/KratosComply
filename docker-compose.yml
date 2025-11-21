@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kratos-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./kratos.db
+    volumes:
+      - ./kratos.db:/app/kratos.db
+      - ./backend:/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kratos-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_BACKEND_URL=http://localhost:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    restart: unless-stopped
+    command: npm run dev -- --host 0.0.0.0
+
+  # Agent service (optional - for running scans in container)
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: kratos-agent
+    volumes:
+      - ./examples:/workspace
+      - ~/.kratos/keys:/root/.kratos/keys
+    profiles:
+      - agent
+    # Usage: docker-compose run --rm agent scan /workspace/sample-app --output /workspace/sample-app/aegis-report.json

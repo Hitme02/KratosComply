@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 from typing import Iterable
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+
+load_dotenv()
 
 from .database import Base, engine, get_db
 from .models import Attestation
@@ -106,11 +110,19 @@ class GitHubCallbackRequest(BaseModel):
 @app.get("/api/auth/github")
 def github_auth() -> RedirectResponse:
     """Initiate GitHub OAuth flow."""
-    # In production: redirect to GitHub OAuth with client_id and state
-    # For demo: redirect to callback with mock code
-    github_client_id = "demo_client_id"  # Replace with actual client ID
-    redirect_uri = "http://localhost:5173/github/callback"
-    state = "demo_state"
+    github_client_id = os.getenv("GITHUB_CLIENT_ID")
+    redirect_uri = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:5173/github/callback")
+    
+    if not github_client_id:
+        raise HTTPException(
+            status_code=500,
+            detail="GitHub OAuth not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables.",
+        )
+    
+    # Generate state for CSRF protection (in production, store in session/redis)
+    import secrets
+    state = secrets.token_urlsafe(32)
+    
     github_oauth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={github_client_id}"
@@ -124,16 +136,31 @@ def github_auth() -> RedirectResponse:
 @app.post("/github/callback", response_model=Report)
 def github_callback(request: GitHubCallbackRequest) -> Report:
     """Handle GitHub OAuth callback and return scanned report."""
-    # In production:
-    # 1. Exchange code for access token
-    # 2. Fetch repository info
-    # 3. Trigger agent scan (via queue/worker)
-    # 4. Return report when ready
-    # For demo: return a mock report structure
+    github_client_id = os.getenv("GITHUB_CLIENT_ID")
+    github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
+    redirect_uri = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:5173/github/callback")
+    
+    if not github_client_id or not github_client_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="GitHub OAuth not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables.",
+        )
+    
     logger.info("GitHub OAuth callback received (code=%s, state=%s)", request.code[:10], request.state)
-    # TODO: Implement actual GitHub integration
-    # For now, return a placeholder that indicates GitHub mode is not yet implemented
+    
+    # TODO: Implement full GitHub integration:
+    # 1. Exchange code for access token via POST https://github.com/login/oauth/access_token
+    # 2. Use token to fetch repository info via GitHub API
+    # 3. Trigger agent scan (via queue/worker) on the repository
+    # 4. Store scan results and return report when ready
+    # 5. Handle async scanning with WebSocket/polling for status updates
+    
+    # For now, return a placeholder
     raise HTTPException(
         status_code=501,
-        detail="GitHub OAuth integration is not yet implemented. Please use Docker agent mode for now.",
+        detail=(
+            "GitHub OAuth token exchange and scanning not yet implemented. "
+            "The OAuth flow is configured, but repository scanning requires additional implementation. "
+            "Please use Docker agent mode for now."
+        ),
     )

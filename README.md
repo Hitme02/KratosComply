@@ -24,20 +24,60 @@ KratosComply is a privacy-first compliance automation engine designed to showcas
 - **Stage E** – React + Vite + Tailwind + shadcn/ui frontend that uploads reports,
   visualises metrics, verifies against the backend, and records attestations with charts.
 
-## Frontend (Stage E)
+## Quick Start
 
+### Docker Compose (Recommended)
+
+```bash
+# Development mode
+docker-compose up --build
+
+# Production mode
+docker-compose -f docker-compose.prod.yml up --build -d
+```
+
+See [docs/DOCKER_SETUP.md](docs/DOCKER_SETUP.md) for detailed instructions.
+
+### Manual Setup
+
+**Backend:**
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e .[dev]
+uvicorn main:app --reload  # http://localhost:8000
+```
+
+**Frontend:**
 ```bash
 cd frontend
 npm install
-npm run dev      # http://localhost:5173 (expects backend on http://localhost:8000)
+npm run dev      # http://localhost:5173
 npm run build    # production bundle
 ```
 
-Highlights:
+**Agent:**
+```bash
+cd agent
+poetry install
+poetry run python -m agent.cli generate-key --keystore ~/.kratos/keys
+poetry run python -m agent.cli scan ../examples/sample-app \
+  --output ../examples/sample-app/aegis-report.json
+```
 
-- Drag & drop upload of `aegis-report.json` with inline findings preview
-- Verification + attestation workflows wired to `/verify-report` and `/attest`
-- Severity bar + compliance radar charts, risk cards, and status indicators
-- Attestation history table with search-ready UI and pagination shell
-- Dark mode by default, theme toggle, shadcn/ui components, Framer Motion animations
+## Features
+
+### Frontend (Stage E)
+- **Landing page** with step-by-step workflow and mode selection (Docker vs GitHub OAuth)
+- **Docker setup page** with copy-paste commands for offline scanning
+- **Enhanced upload** with drag & drop, public key input, and visual feedback
+- **Verification + attestation** workflows wired to `/verify-report` and `/attest`
+- **Charts**: Severity bar + compliance radar, risk cards, and status indicators
+- **Attestation history** table with search-ready UI
+- **Dark mode** by default, theme toggle, shadcn/ui components, Framer Motion animations
+
+### GitHub OAuth (Partial)
+- OAuth authorization flow configured
+- Environment variable support
+- Token exchange and repository scanning (TODO - see [docs/GITHUB_OAUTH_SETUP.md](docs/GITHUB_OAUTH_SETUP.md))
 
