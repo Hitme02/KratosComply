@@ -11,11 +11,9 @@ RUN apt-get update && apt-get install -y \
 # Copy agent files
 COPY agent/ /app/
 
-# Install Poetry and dependencies
-RUN pip install --no-cache-dir poetry && \
-    poetry config virtualenvs.create false && \
-    poetry install --no-dev && \
-    pip uninstall -y poetry
+# Install dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Create keystore directory
 RUN mkdir -p /root/.kratos/keys
