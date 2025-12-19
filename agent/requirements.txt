@@ -1,0 +1,8 @@
+# KratosComply Agent Dependencies
+# Install with: pip install -r requirements.txt
+
+click>=8.1.7,<8.2.0
+typer>=0.12.3
+pynacl>=1.5.0
+pyyaml>=6.0.2
+

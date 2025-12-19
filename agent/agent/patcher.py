@@ -54,7 +54,7 @@ class PatchManager:
             patch_path = self.patches_dir / filename
             patch_path.write_text(patch_text, encoding="utf-8")
             safe, log = self.sandbox.evaluate_patch(patch_text)
-            self._write_metadata(patch_path, finding.id, safe, log)
+            self._write_metadata(patch_path, finding.id, safe, log, finding)
             results.append(
                 PatchResult(
                     finding_id=finding.id,
@@ -66,13 +66,32 @@ class PatchManager:
             patch_index += 1
         return results
 
-    def _write_metadata(self, patch_path: Path, finding_id: str, safe: bool, log: str) -> None:
+    def _write_metadata(
+        self,
+        patch_path: Path,
+        finding_id: str,
+        safe: bool,
+        log: str,
+        finding: Finding | None = None,
+    ) -> None:
+        """Write patch metadata including compliance control declarations."""
         metadata_path = self._metadata_path(patch_path)
         payload = {
             "finding_id": finding_id,
             "safe": safe,
             "log": log.strip()[-4000:],
         }
+        # Add compliance control metadata if available
+        if finding:
+            from .compliance import get_control_for_finding_type
+            control = get_control_for_finding_type(finding.type)
+            if control:
+                payload["compliance_control"] = {
+                    "control_id": control.control_id,
+                    "control_category": control.control_category.value,
+                    "frameworks": control.frameworks,
+                    "description": control.description,
+                }
         metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _metadata_path(self, patch_path: Path) -> Path:

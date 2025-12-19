@@ -6,13 +6,27 @@ export function ComplianceSummary() {
   const { report } = useReportStore();
   if (!report) return null;
 
+  // Calculate compliance readiness metrics
+  const totalControls = report.findings.length;
+  const failedControls = report.findings.filter(
+    (f) => f.control_pass_fail_status === "FAIL"
+  ).length;
+  const passedControls = totalControls - failedControls;
+  const controlPassRate = totalControls > 0 ? Math.round((passedControls / totalControls) * 100) : 100;
+  
+  // Collect frameworks
+  const frameworks = new Set<string>();
+  report.findings.forEach((f) => {
+    (f.compliance_frameworks_affected || []).forEach((fw) => frameworks.add(fw));
+  });
+  
   const metrics = [
-    { label: "Total Findings", value: report.findings.length },
-    { label: "Risk Score", value: report.metrics.risk_score },
-    { label: "Critical", value: report.metrics.critical },
-    { label: "High", value: report.metrics.high },
-    { label: "Medium", value: report.metrics.medium },
-    { label: "Low", value: report.metrics.low },
+    { label: "Control Violations", value: failedControls },
+    { label: "Controls Passed", value: passedControls },
+    { label: "Compliance Readiness", value: `${controlPassRate}%` },
+    { label: "Frameworks Affected", value: frameworks.size },
+    { label: "Evidence Gaps", value: report.findings.length },
+    { label: "Audit Status", value: controlPassRate >= 80 ? "Ready" : "Review Required" },
   ];
 
   return (

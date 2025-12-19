@@ -1,0 +1,7 @@
+database:
+  host: localhost
+  password: "secret123"  # Violation
+  user: admin
+
+api:
+  key: "sk_test_abcdef123456"  # Violation

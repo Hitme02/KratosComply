@@ -25,10 +25,11 @@ export function Dashboard() {
     <div className="space-y-8">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
         <div>
-          <p className="text-sm uppercase tracking-[0.4em] text-muted-foreground">Cybersecurity Compliance</p>
-          <h1 className="text-4xl font-semibold text-foreground">KratosComply Control Tower</h1>
+          <p className="text-sm uppercase tracking-[0.4em] text-muted-foreground">Compliance Evidence Engine</p>
+          <h1 className="text-4xl font-semibold text-foreground">KratosComply Audit Cockpit</h1>
           <p className="text-base text-muted-foreground">
-            Upload your Aegis report, verify every signature, and attest compliance for investor-ready confidence.
+            Upload compliance evidence reports, verify cryptographic signatures, and create legal-grade attestations
+            for auditors, investors, and regulators.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">

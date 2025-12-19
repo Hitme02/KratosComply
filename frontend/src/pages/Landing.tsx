@@ -6,6 +6,9 @@ import { Github, Container, ShieldCheck, Upload, FileCheck, BarChart3, ArrowRigh
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getGitHubAuthUrl } from "@/services/api";
+import DecryptedText from "@/components/DecryptedText";
+import Particles from "@/components/Particles";
+import TiltedCard from "@/components/TiltedCard";
 
 const steps = [
   {
@@ -28,8 +31,8 @@ const steps = [
   },
   {
     number: 4,
-    title: "Review & verify",
-    description: "View findings, verify signatures, create attestations, and track compliance metrics",
+    title: "Review & attest",
+    description: "View control violations, verify cryptographic signatures, create legal-grade attestations, and assess audit readiness",
     icon: BarChart3,
   },
 ];
@@ -50,42 +53,89 @@ export function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen space-y-12 py-12">
+    <div className="relative min-h-screen space-y-12 py-12 overflow-hidden">
+      {/* Particles Background */}
+      <div className="fixed inset-0 z-0">
+        <Particles
+          particleCount={300}
+          particleSpread={15}
+          speed={0.15}
+          particleColors={["#6366f1", "#8b5cf6", "#ec4899", "#3b82f6"]}
+          moveParticlesOnHover={true}
+          particleHoverFactor={2}
+          alphaParticles={true}
+          particleBaseSize={80}
+          sizeRandomness={0.8}
+          cameraDistance={25}
+          disableRotation={false}
+        />
+      </div>
+
       {/* Hero */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center space-y-4"
+        className="relative text-center space-y-6 py-20 z-20"
       >
-        <h1 className="text-5xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-          KratosComply
-        </h1>
-        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          Cybersecurity compliance automation for startups. Get SOC2/ISO27001 ready in minutes.
-        </p>
+        <div className="relative">
+          <DecryptedText
+            text="KratosComply"
+            speed={80}
+            maxIterations={25}
+            sequential={true}
+            revealDirection="center"
+            useOriginalCharsOnly={false}
+            characters="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"
+            className="text-7xl md:text-8xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent"
+            encryptedClassName="text-7xl md:text-8xl font-bold text-muted-foreground/30"
+            parentClassName="block"
+            animateOn="view"
+          />
+        </div>
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="text-xl text-muted-foreground max-w-2xl mx-auto relative z-20"
+        >
+          Compliance evidence automation for startups. Generate audit-ready compliance reports with
+          cryptographic verification for SOC2, ISO27001, GDPR, and DPDP Act compliance.
+        </motion.p>
       </motion.div>
 
       {/* Step-by-step tiles */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto px-4">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto px-4 relative z-20">
         {steps.map((step, idx) => (
           <motion.div
             key={step.number}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: idx * 0.1 }}
+            className="h-[240px]"
           >
-            <Card className="h-full hover:border-primary/50 transition-colors">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold">
-                    {step.number}
+            <TiltedCard
+              containerHeight="100%"
+              containerWidth="100%"
+              imageHeight="100%"
+              imageWidth="100%"
+              scaleOnHover={1.05}
+              rotateAmplitude={12}
+              showMobileWarning={false}
+              showTooltip={false}
+            >
+              <Card className="h-full w-full bg-card/95 backdrop-blur-sm border border-border/50 hover:border-primary/50 transition-colors">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold">
+                      {step.number}
+                    </div>
+                    <step.icon className="h-6 w-6 text-primary" />
                   </div>
-                  <step.icon className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="mt-4">{step.title}</CardTitle>
-                <CardDescription>{step.description}</CardDescription>
-              </CardHeader>
-            </Card>
+                  <CardTitle className="mt-4">{step.title}</CardTitle>
+                  <CardDescription>{step.description}</CardDescription>
+                </CardHeader>
+              </Card>
+            </TiltedCard>
           </motion.div>
         ))}
       </div>
@@ -95,7 +145,7 @@ export function LandingPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="max-w-4xl mx-auto px-4 space-y-6"
+        className="max-w-4xl mx-auto px-4 space-y-6 relative z-20"
       >
         <div className="text-center space-y-2">
           <h2 className="text-3xl font-semibold">Choose your compliance mode</h2>
@@ -106,15 +156,22 @@ export function LandingPage() {
 
         <div className="grid gap-6 md:grid-cols-2">
           {/* Docker Mode */}
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
+          <div className="h-[350px]">
+            <TiltedCard
+              containerHeight="100%"
+              containerWidth="100%"
+              imageHeight="100%"
+              imageWidth="100%"
+              scaleOnHover={1.05}
+              rotateAmplitude={12}
+              showMobileWarning={false}
+              showTooltip={false}
+            >
             <Card
-              className={`cursor-pointer transition-all ${
+              className={`h-full w-full cursor-pointer transition-all bg-card/95 backdrop-blur-sm ${
                 selectedMode === "docker"
                   ? "border-primary ring-2 ring-primary/20"
-                  : "hover:border-primary/50"
+                  : "border-border/50 hover:border-primary/50"
               }`}
               onClick={() => handleModeSelect("docker")}
             >
@@ -144,18 +201,26 @@ export function LandingPage() {
                 </Button>
               </CardContent>
             </Card>
-          </motion.div>
+          </TiltedCard>
+          </div>
 
           {/* GitHub Mode */}
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
+          <div className="h-[350px]">
+            <TiltedCard
+              containerHeight="100%"
+              containerWidth="100%"
+              imageHeight="100%"
+              imageWidth="100%"
+              scaleOnHover={1.05}
+              rotateAmplitude={12}
+              showMobileWarning={false}
+              showTooltip={false}
+            >
             <Card
-              className={`cursor-pointer transition-all ${
+              className={`h-full w-full cursor-pointer transition-all bg-card/95 backdrop-blur-sm ${
                 selectedMode === "github"
                   ? "border-primary ring-2 ring-primary/20"
-                  : "hover:border-primary/50"
+                  : "border-border/50 hover:border-primary/50"
               }`}
               onClick={() => handleModeSelect("github")}
             >
@@ -185,7 +250,8 @@ export function LandingPage() {
                 </Button>
               </CardContent>
             </Card>
-          </motion.div>
+          </TiltedCard>
+          </div>
         </div>
       </motion.div>
 
@@ -194,7 +260,7 @@ export function LandingPage() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.7 }}
-        className="max-w-4xl mx-auto px-4"
+        className="max-w-4xl mx-auto px-4 relative z-20"
       >
         <Card className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border-primary/20">
           <CardContent className="p-6">

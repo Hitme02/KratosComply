@@ -1,26 +1,33 @@
-"""FastAPI application for verifying reports and recording attestations."""
+"""KratosComply Backend: Compliance Evidence Verification & Attestation Ledger.
+
+This backend verifies cryptographically signed compliance evidence reports
+and maintains a legal-grade attestation ledger for audit verifiability.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
 import os
-from typing import Iterable
+from typing import Any, Iterable
 
 from dotenv import load_dotenv
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 load_dotenv()
 
-from .database import Base, engine, get_db
-from .github_service import exchange_code_for_token, fetch_user_info, fetch_user_repositories
-from .models import Attestation
-from .schemas import (
+from database import Base, engine, get_db
+from github_service import exchange_code_for_token, fetch_user_info, fetch_user_repositories
+from models import Attestation
+from schemas import (
     AttestRequest,
     AttestResponse,
+    AuditorVerifyRequest,
+    AuditorVerifyResponse,
     Finding,
     Metrics,
     ProjectInfo,
@@ -28,14 +35,32 @@ from .schemas import (
     VerifyReportRequest,
     VerifyReportResponse,
 )
-from .security import build_merkle_root, verify_signature
+from security import build_merkle_root, verify_signature
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="KratosComply Backend", version="0.2.0")
+app = FastAPI(
+    title="KratosComply Compliance Evidence Backend",
+    description="Verifies compliance evidence reports and maintains attestation ledger",
+    version="1.0.0",
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
@@ -44,9 +69,34 @@ def read_root() -> dict[str, str]:
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
+@app.get("/health")
+def health_check() -> dict[str, Any]:
+    """Health check endpoint for monitoring and load balancers."""
+    try:
+        # Check database connection
+        db = next(get_db())
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+        db_status = "healthy"
+    except Exception as e:
+        logger.warning(f"Database health check failed: {e}")
+        db_status = "unhealthy"
+    
+    return {
+        "status": "ok" if db_status == "healthy" else "degraded",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "database": db_status,
+        "version": "1.0.0",
+    }
+
+
 @app.post("/verify-report", response_model=VerifyReportResponse)
 def verify_report(payload: VerifyReportRequest) -> VerifyReportResponse:
-    """Verify that a report's signature and Merkle root match."""
+    """Verify compliance evidence report signature and Merkle root integrity.
+    
+    Validates that the report is cryptographically authentic and suitable
+    for audit, investor, and regulatory verification.
+    """
     report_dict = payload.report.model_dump()
     signature_hex = report_dict.get("agent_signature")
     if not signature_hex:
@@ -63,7 +113,7 @@ def verify_report(payload: VerifyReportRequest) -> VerifyReportResponse:
     if expected_root != payload.report.merkle_root.lower():
         return VerifyReportResponse(valid=False, message="Merkle root mismatch")
 
-    return VerifyReportResponse(valid=True, message="Report verified")
+    return VerifyReportResponse(valid=True, message="Compliance evidence report verified")
 
 
 @app.post("/attest", response_model=AttestResponse, status_code=201)
@@ -71,12 +121,26 @@ def record_attestation(
     request: AttestRequest,
     db: Session = Depends(get_db),
 ) -> AttestResponse:
-    """Record an attestation for an already verified Merkle root."""
+    """Record a compliance attestation in the legal-grade ledger.
+    
+    Creates an attestation record with framework coverage and control metrics
+    suitable for audit, investor, and regulatory verification.
+    """
     attestation = Attestation(
         merkle_root=request.merkle_root.lower(),
         public_key_hex=request.public_key_hex.lower(),
     )
     attestation.set_metadata(request.metadata)
+    
+    # Extract compliance metadata from request metadata if available
+    if request.metadata:
+        frameworks = request.metadata.get("frameworks", [])
+        if frameworks:
+            attestation.set_frameworks(frameworks)
+        control_coverage = request.metadata.get("control_coverage_percent")
+        if control_coverage is not None:
+            attestation.control_coverage_percent = float(control_coverage)
+    
     db.add(attestation)
     db.commit()
     db.refresh(attestation)
@@ -84,6 +148,82 @@ def record_attestation(
         attest_id=attestation.id,
         status="recorded",
         timestamp=attestation.created_at or datetime.now(timezone.utc),
+        frameworks_covered=attestation.get_frameworks(),
+        control_coverage_percent=attestation.control_coverage_percent,
+    )
+
+
+@app.get("/api/attestations")
+def list_attestations(
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """List all attestations in the compliance ledger."""
+    attestations = (
+        db.query(Attestation)
+        .order_by(Attestation.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+    
+    total = db.query(Attestation).count()
+    
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "attestations": [
+            {
+                "id": att.id,
+                "merkle_root": att.merkle_root,
+                "public_key_hex": att.public_key_hex,
+                "created_at": att.created_at.isoformat() if att.created_at else None,
+                "frameworks_covered": att.get_frameworks(),
+                "control_coverage_percent": att.control_coverage_percent,
+            }
+            for att in attestations
+        ],
+    }
+
+
+@app.post("/auditor/verify", response_model=AuditorVerifyResponse)
+def auditor_verify(
+    request: AuditorVerifyRequest,
+    db: Session = Depends(get_db),
+) -> AuditorVerifyResponse:
+    """External auditor verification endpoint (read-only).
+    
+    Allows auditors, investors, and regulators to verify attestation records
+    without exposing sensitive findings or source code.
+    """
+    attestation = (
+        db.query(Attestation)
+        .filter(
+            Attestation.merkle_root == request.merkle_root.lower(),
+            Attestation.public_key_hex == request.public_key_hex.lower(),
+        )
+        .first()
+    )
+    
+    if not attestation:
+        return AuditorVerifyResponse(
+            verified=False,
+            attest_id=None,
+            frameworks_covered=[],
+            control_coverage_percent=None,
+            timestamp=None,
+            message="Attestation not found in compliance ledger",
+        )
+    
+    return AuditorVerifyResponse(
+        verified=True,
+        attest_id=attestation.id,
+        frameworks_covered=attestation.get_frameworks(),
+        control_coverage_percent=attestation.control_coverage_percent,
+        timestamp=attestation.created_at,
+        message="Attestation verified in compliance ledger",
     )
 
 
@@ -109,6 +249,12 @@ def _ordered_hashes(findings: Iterable[Finding]) -> list[str]:
 class GitHubCallbackRequest(BaseModel):
     code: str
     state: str
+
+
+class GitHubReposResponse(BaseModel):
+    """Response containing user's repositories for selection."""
+    username: str
+    repositories: list[dict[str, Any]]
 
 
 @app.get("/api/auth/github")
@@ -137,9 +283,9 @@ def github_auth() -> RedirectResponse:
     return RedirectResponse(url=github_oauth_url)
 
 
-@app.post("/github/callback", response_model=Report)
-async def github_callback(request: GitHubCallbackRequest) -> Report:
-    """Handle GitHub OAuth callback and return scanned report."""
+@app.post("/github/callback", response_model=GitHubReposResponse)
+async def github_callback(request: GitHubCallbackRequest) -> GitHubReposResponse:
+    """Handle GitHub OAuth callback and return user's repositories for selection."""
     github_client_id = os.getenv("GITHUB_CLIENT_ID")
     github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     redirect_uri = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:5173/github/callback")
@@ -165,48 +311,35 @@ async def github_callback(request: GitHubCallbackRequest) -> Report:
         logger.info("GitHub user authenticated: %s", username)
         
         # Fetch user's repositories
-        repos = await fetch_user_repositories(access_token, limit=5)
+        repos = await fetch_user_repositories(access_token, limit=20)
         if not repos:
             raise HTTPException(
                 status_code=404,
                 detail="No repositories found. Please ensure your GitHub account has at least one repository.",
             )
         
-        # For now, use the first repository as the scan target
-        # TODO: Allow user to select repository via frontend
-        selected_repo = repos[0]
-        repo_name = selected_repo["name"]
-        repo_owner = selected_repo["owner"]["login"]
-        repo_full_name = f"{repo_owner}/{repo_name}"
+        # Format repositories for frontend selection
+        formatted_repos = [
+            {
+                "id": repo["id"],
+                "name": repo["name"],
+                "full_name": repo["full_name"],
+                "owner": repo["owner"]["login"],
+                "description": repo.get("description", ""),
+                "private": repo.get("private", False),
+                "updated_at": repo.get("updated_at", ""),
+                "default_branch": repo.get("default_branch", "main"),
+            }
+            for repo in repos
+        ]
         
-        logger.info("Selected repository for scanning: %s", repo_full_name)
+        logger.info("Returning %d repositories for user selection", len(formatted_repos))
         
-        # TODO: Trigger actual agent scan via worker queue
-        # For now, return a placeholder report indicating connection success
-        # In production, this would trigger an async scan and return a job ID
+        # NOTE: Access token should be stored securely for later use
+        # For now, we'll need to re-authenticate or use a session
+        # TODO: Store access token in secure session/database
         
-        # Create a placeholder report structure
-        placeholder_report = Report(
-            report_version="1.0",
-            project=ProjectInfo(
-                name=repo_name,
-                path=repo_full_name,
-                commit=selected_repo.get("default_branch"),
-                scan_time=datetime.now(timezone.utc).isoformat(),
-            ),
-            standards=["SOC2", "ISO27001"],
-            findings=[],  # Empty until actual scan is implemented
-            metrics=Metrics(critical=0, high=0, medium=0, low=0, risk_score=0),
-            merkle_root="0" * 64,  # Placeholder
-            agent_signature="0" * 128,  # Placeholder
-            agent_version="kratos-agent-demo-0.1",
-        )
-        
-        # Store access token and repo info for future scanning
-        # TODO: Store in database with user session/ID for later use
-        logger.info("GitHub OAuth flow completed. Repository ready for scanning: %s", repo_full_name)
-        
-        return placeholder_report
+        return GitHubReposResponse(username=username, repositories=formatted_repos)
         
     except httpx.HTTPStatusError as e:
         logger.error("GitHub API error: %s", e.response.text)

@@ -33,8 +33,24 @@ export async function fetchAttestations(): Promise<AttestationRecord[]> {
   }
 }
 
-export async function fetchGitHubReport(code: string, state: string): Promise<Report> {
-  const { data } = await api.post<Report>("/github/callback", { code, state });
+export interface GitHubRepository {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: string;
+  description: string;
+  private: boolean;
+  updated_at: string;
+  default_branch: string;
+}
+
+export interface GitHubReposResponse {
+  username: string;
+  repositories: GitHubRepository[];
+}
+
+export async function fetchGitHubRepos(code: string, state: string): Promise<GitHubReposResponse> {
+  const { data } = await api.post<GitHubReposResponse>("/github/callback", { code, state });
   return data;
 }
 

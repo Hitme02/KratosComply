@@ -27,6 +27,7 @@ class Metrics(BaseModel):
 
 
 class Finding(BaseModel):
+    """Compliance control violation finding with audit-grade metadata."""
     id: str
     type: str
     file: str
@@ -35,6 +36,13 @@ class Finding(BaseModel):
     severity: Literal["critical", "high", "medium", "low"]
     confidence: float = Field(ge=0.0, le=1.0)
     evidence_hash: HexStr64
+    # Compliance metadata
+    compliance_frameworks_affected: list[str] = Field(default_factory=list)
+    control_id: str = ""
+    control_category: str = ""
+    control_pass_fail_status: str = ""
+    required_evidence_missing: str = ""
+    auditor_explanation: str = ""
 
 
 class Report(BaseModel):
@@ -68,4 +76,22 @@ class AttestResponse(BaseModel):
     attest_id: int
     status: Literal["recorded"]
     timestamp: datetime
+    frameworks_covered: list[str] = Field(default_factory=list)
+    control_coverage_percent: float | None = None
+
+
+class AuditorVerifyRequest(BaseModel):
+    """Request for external auditor verification (read-only)."""
+    merkle_root: HexStr64
+    public_key_hex: HexStr64
+
+
+class AuditorVerifyResponse(BaseModel):
+    """Response for auditor verification with compliance metadata."""
+    verified: bool
+    attest_id: int | None
+    frameworks_covered: list[str]
+    control_coverage_percent: float | None
+    timestamp: datetime | None
+    message: str
 

@@ -20,8 +20,8 @@ export function ReportPreview() {
     return (
       <Card className="h-full">
         <CardHeader>
-          <CardTitle>No report loaded</CardTitle>
-          <CardDescription>Upload an aegis report to see findings and compliance insights.</CardDescription>
+          <CardTitle>No compliance evidence report loaded</CardTitle>
+          <CardDescription>Upload a compliance evidence report to see control violations and evidence gaps.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-3 rounded-2xl border border-dashed border-border/60 p-6 text-muted-foreground">
@@ -41,8 +41,8 @@ export function ReportPreview() {
             <CardTitle>{report.project.name}</CardTitle>
             <CardDescription className="flex flex-wrap gap-2 text-sm text-muted-foreground">
               <span>Path: {report.project.path}</span>
-              <span>• Findings: {report.findings.length}</span>
-              <span>• Risk score: {report.metrics.risk_score}</span>
+              <span>• Control Violations: {report.findings.length}</span>
+              <span>• Frameworks: {report.standards.join(", ")}</span>
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -59,7 +59,7 @@ export function ReportPreview() {
         </div>
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            <AlertTriangle className="h-4 w-4" /> Findings
+            <AlertTriangle className="h-4 w-4" /> Control Violations & Evidence Gaps
           </div>
           <div className="space-y-3">
             {report.findings.slice(0, 6).map((finding) => (
@@ -79,9 +79,15 @@ export function ReportPreview() {
                   <span className={cn("rounded-full px-2 py-0.5 font-semibold", severityStyles[finding.severity])}>
                     {finding.severity.toUpperCase()}
                   </span>
-                  <Badge variant="outline">ID: {finding.id}</Badge>
-                  <Badge variant="outline">Confidence {Math.round(finding.confidence * 100)}%</Badge>
+                  <Badge variant="outline">Control: {finding.control_id || "UNKNOWN"}</Badge>
+                  <Badge variant="outline">Status: {finding.control_pass_fail_status}</Badge>
+                  {(finding.compliance_frameworks_affected || []).map((fw) => (
+                    <Badge key={fw} variant="outline">{fw}</Badge>
+                  ))}
                 </div>
+                {finding.auditor_explanation && (
+                  <p className="mt-2 text-xs text-muted-foreground italic">{finding.auditor_explanation}</p>
+                )}
               </motion.div>
             ))}
             {report.findings.length > 6 && (

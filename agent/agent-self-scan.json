@@ -1,0 +1,129 @@
+{
+  "report_version": "1.0",
+  "project": {
+    "name": "agent-self",
+    "path": "/Users/user/Desktop/KratosCompliance/agent",
+    "commit": "6b776e41cbc381989c744bc02e35c61c5b3da3be",
+    "scan_time": "2025-12-19T14:20:15.528562+00:00"
+  },
+  "standards": [
+    "SOC2",
+    "ISO27001"
+  ],
+  "findings": [
+    {
+      "id": "F001",
+      "type": "hardcoded_secret",
+      "file": "test-workspace/app.py",
+      "line": 4,
+      "snippet": "API_KEY = \"sk_live_1234567890abcdef\"",
+      "severity": "high",
+      "confidence": 0.95,
+      "evidence_hash": "2cff8d3836afb9221748be3fefe616447e5450badc44e0c9bc81b038fc38bcbd",
+      "compliance_frameworks_affected": [
+        "SOC2",
+        "ISO27001",
+        "DPDP",
+        "GDPR"
+      ],
+      "control_id": "SOC2-CC6.2",
+      "control_category": "Secrets Management",
+      "control_pass_fail_status": "FAIL",
+      "required_evidence_missing": "Missing code_proof for SOC2-CC6.2",
+      "auditor_explanation": "Hardcoded secrets violate access control and data protection requirements by exposing credentials in source code. This creates both a security risk and an evidence gap: there is no proof that secrets are managed through secure, auditable channels. Compliance requires secrets to be stored in environment variables or secure vaults with access logging to meet SOC2, ISO27001, GDPR Article 32 (security of processing), and DPDP requirements."
+    },
+    {
+      "id": "F002",
+      "type": "hardcoded_secret",
+      "file": "test-workspace/app.py",
+      "line": 5,
+      "snippet": "DATABASE_PASSWORD = \"super_secret_password_123\"",
+      "severity": "high",
+      "confidence": 0.85,
+      "evidence_hash": "6493b17d0f597318c96ef36244148e9a02510a6bcfb6f58101b359151a041566",
+      "compliance_frameworks_affected": [
+        "SOC2",
+        "ISO27001",
+        "DPDP",
+        "GDPR"
+      ],
+      "control_id": "SOC2-CC6.2",
+      "control_category": "Secrets Management",
+      "control_pass_fail_status": "FAIL",
+      "required_evidence_missing": "Missing code_proof for SOC2-CC6.2",
+      "auditor_explanation": "Hardcoded secrets violate access control and data protection requirements by exposing credentials in source code. This creates both a security risk and an evidence gap: there is no proof that secrets are managed through secure, auditable channels. Compliance requires secrets to be stored in environment variables or secure vaults with access logging to meet SOC2, ISO27001, GDPR Article 32 (security of processing), and DPDP requirements."
+    },
+    {
+      "id": "F003",
+      "type": "hardcoded_secret",
+      "file": "test-workspace/app.py",
+      "line": 14,
+      "snippet": "password = \"admin123\"",
+      "severity": "high",
+      "confidence": 0.85,
+      "evidence_hash": "7c712a51845af42e5bc268e1dbceed3c2fb9a2e7466f3e953c0831132af3a8dc",
+      "compliance_frameworks_affected": [
+        "SOC2",
+        "ISO27001",
+        "DPDP",
+        "GDPR"
+      ],
+      "control_id": "SOC2-CC6.2",
+      "control_category": "Secrets Management",
+      "control_pass_fail_status": "FAIL",
+      "required_evidence_missing": "Missing code_proof for SOC2-CC6.2",
+      "auditor_explanation": "Hardcoded secrets violate access control and data protection requirements by exposing credentials in source code. This creates both a security risk and an evidence gap: there is no proof that secrets are managed through secure, auditable channels. Compliance requires secrets to be stored in environment variables or secure vaults with access logging to meet SOC2, ISO27001, GDPR Article 32 (security of processing), and DPDP requirements."
+    },
+    {
+      "id": "F004",
+      "type": "hardcoded_secret",
+      "file": "test-workspace/config.yaml",
+      "line": 3,
+      "snippet": "password: \"secret123\"  # Violation",
+      "severity": "high",
+      "confidence": 0.8,
+      "evidence_hash": "801ca664384f41d8149962145a0283549a01581ad715499a7d00a48ea6bc3e0d",
+      "compliance_frameworks_affected": [
+        "SOC2",
+        "ISO27001",
+        "DPDP",
+        "GDPR"
+      ],
+      "control_id": "SOC2-CC6.2",
+      "control_category": "Secrets Management",
+      "control_pass_fail_status": "FAIL",
+      "required_evidence_missing": "Missing code_proof for SOC2-CC6.2",
+      "auditor_explanation": "Hardcoded secrets violate access control and data protection requirements by exposing credentials in source code. This creates both a security risk and an evidence gap: there is no proof that secrets are managed through secure, auditable channels. Compliance requires secrets to be stored in environment variables or secure vaults with access logging to meet SOC2, ISO27001, GDPR Article 32 (security of processing), and DPDP requirements."
+    },
+    {
+      "id": "F005",
+      "type": "insecure_acl",
+      "file": "test-workspace/infra/bucket.tf",
+      "line": 5,
+      "snippet": "acl = \"public-read\"",
+      "severity": "high",
+      "confidence": 0.9,
+      "evidence_hash": "9ba132935c7f01a5148d337b2859aaf9cc16b53f90dacd86263aa09238deb1b3",
+      "compliance_frameworks_affected": [
+        "SOC2",
+        "ISO27001",
+        "GDPR"
+      ],
+      "control_id": "SOC2-CC6.1",
+      "control_category": "Infrastructure Security",
+      "control_pass_fail_status": "FAIL",
+      "required_evidence_missing": "Missing config_proof for SOC2-CC6.1",
+      "auditor_explanation": "Public-read ACLs on storage resources violate access control and data protection requirements. This creates both a security risk and an evidence gap: there is no proof that data access is restricted to authorized parties. Compliance requires explicit access policies and audit logs for all data access to meet SOC2, ISO27001, and GDPR Article 32 (security of processing) requirements."
+    }
+  ],
+  "metrics": {
+    "critical": 0,
+    "high": 5,
+    "medium": 0,
+    "low": 0,
+    "risk_score": 100
+  },
+  "merkle_root": "8aa9b43c625e5dfc37cb45e151faf997afa81c1a9df644b3494fe6eb0a4fea27",
+  "agent_signature": "fcd248c7f7791604e9e1d261e9a58d2de2dc9730da384859cc651602ab74319204395e38e493b9e376d15e5e143d0503634fbaf379eb1a83641d5d18c4c0c503",
+  "agent_version": "kratos-comply-agent-1.0.0"
+}
