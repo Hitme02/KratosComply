@@ -51,14 +51,17 @@ export function AttestationHistory({ condensed = false }: { condensed?: boolean 
                 </TableCell>
               </TableRow>
             )}
-            {visibleRecords.map((record) => (
-              <TableRow key={record.attest_id}>
-                <TableCell className="font-semibold">#{record.attest_id}</TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{record.merkle_root}</TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{record.public_key_hex}</TableCell>
-                <TableCell>{new Date(record.timestamp).toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
+            {visibleRecords.map((record) => {
+              const timestamp = record.created_at || record.timestamp || "";
+              return (
+                <TableRow key={record.attest_id || record.id}>
+                  <TableCell className="font-bold text-foreground">#{record.attest_id || record.id}</TableCell>
+                  <TableCell className="font-mono text-sm text-foreground/80">{record.merkle_root}</TableCell>
+                  <TableCell className="font-mono text-sm text-foreground/80">{record.public_key_hex}</TableCell>
+                  <TableCell className="text-foreground/90">{timestamp ? new Date(timestamp).toLocaleString() : "N/A"}</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
         {!condensed && attestations.length > 5 && (

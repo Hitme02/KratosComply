@@ -23,7 +23,7 @@ export function SeverityBarChart() {
   return (
     <div className="rounded-2xl border border-border/60 bg-card/60 p-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-muted-foreground">Control Violation Severity</p>
+        <p className="text-sm font-semibold text-muted-foreground">Evidence Gap Severity</p>
       </div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">

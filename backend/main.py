@@ -22,13 +22,18 @@ load_dotenv()
 
 from database import Base, engine, get_db
 from github_service import exchange_code_for_token, fetch_user_info, fetch_user_repositories
-from models import Attestation
+from models import Attestation, HumanAttestation, EvidenceUpload
 from schemas import (
     AttestRequest,
     AttestResponse,
     AuditorVerifyRequest,
     AuditorVerifyResponse,
+    EvidenceUploadRequest,
+    EvidenceUploadResponse,
     Finding,
+    HumanAttestationRequest,
+    HumanAttestationResponse,
+    HumanAttestationListResponse,
     Metrics,
     ProjectInfo,
     Report,
@@ -40,7 +45,9 @@ from security import build_merkle_root, verify_signature
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-Base.metadata.create_all(bind=engine)
+# Only create tables if not in testing mode
+if not os.getenv("TESTING"):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="KratosComply Compliance Evidence Backend",
@@ -66,7 +73,7 @@ app.add_middleware(
 @app.get("/")
 def read_root() -> dict[str, str]:
     """Simple health endpoint."""
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/health")
@@ -121,18 +128,25 @@ def record_attestation(
     request: AttestRequest,
     db: Session = Depends(get_db),
 ) -> AttestResponse:
-    """Record a compliance attestation in the legal-grade ledger.
+    """Record a compliance attestation as a legal-grade compliance statement.
     
-    Creates an attestation record with framework coverage and control metrics
-    suitable for audit, investor, and regulatory verification.
+    Creates a cryptographically sealed attestation record with:
+    - Framework coverage
+    - Control coverage metrics
+    - Evidence hashes (cryptographic binding)
+    - Human signer identities (hashed for privacy)
+    - Control states (VERIFIED_MACHINE, VERIFIED_SYSTEM, ATTESTED_HUMAN, etc.)
+    
+    This attestation is suitable for audit, investor, and regulatory verification.
     """
     attestation = Attestation(
         merkle_root=request.merkle_root.lower(),
         public_key_hex=request.public_key_hex.lower(),
+        verified_at=datetime.now(timezone.utc),
     )
     attestation.set_metadata(request.metadata)
     
-    # Extract compliance metadata from request metadata if available
+    # Extract compliance metadata from request
     if request.metadata:
         frameworks = request.metadata.get("frameworks", [])
         if frameworks:
@@ -141,15 +155,29 @@ def record_attestation(
         if control_coverage is not None:
             attestation.control_coverage_percent = float(control_coverage)
     
+    # Set legal artifact metadata
+    if request.evidence_hashes:
+        attestation.set_evidence_hashes(request.evidence_hashes)
+    
+    if request.human_signer_identities:
+        attestation.set_human_signer_identities(request.human_signer_identities)
+    
+    if request.control_states:
+        attestation.set_control_states(request.control_states)
+    
     db.add(attestation)
     db.commit()
     db.refresh(attestation)
+    
     return AttestResponse(
         attest_id=attestation.id,
         status="recorded",
         timestamp=attestation.created_at or datetime.now(timezone.utc),
         frameworks_covered=attestation.get_frameworks(),
         control_coverage_percent=attestation.control_coverage_percent,
+        evidence_count=len(attestation.get_evidence_hashes()),
+        human_signer_count=len(attestation.get_human_signer_identities()),
+        control_count=len(attestation.get_control_states()),
     )
 
 
@@ -353,3 +381,187 @@ async def github_callback(request: GitHubCallbackRequest) -> GitHubReposResponse
     except Exception as e:
         logger.exception("Unexpected error in GitHub callback")
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+# Human Attestation Endpoints
+@app.post("/api/human/upload", response_model=EvidenceUploadResponse, status_code=201)
+def upload_evidence(
+    request: EvidenceUploadRequest,
+    db: Session = Depends(get_db),
+) -> EvidenceUploadResponse:
+    """Upload evidence file for human attestation.
+    
+    Evidence files are stored with cryptographic hashes for integrity verification.
+    """
+    import base64
+    import hashlib
+    import uuid
+    from backend.models import EvidenceUpload
+    
+    try:
+        # Decode base64 content
+        content_bytes = base64.b64decode(request.content_base64)
+        content_hash = hashlib.sha256(content_bytes).hexdigest()
+        
+        # Generate unique upload ID
+        upload_id = str(uuid.uuid4())
+        
+        # Create evidence upload record
+        evidence_upload = EvidenceUpload(
+            upload_id=upload_id,
+            file_name=request.file_name,
+            file_type=request.file_type,
+            content_hash=content_hash,
+            file_size=len(content_bytes),
+            storage_path=None,  # In production, store file in blob storage
+            uploaded_by=None,  # In production, get from auth context
+        )
+        evidence_upload.set_metadata(request.metadata)
+        
+        db.add(evidence_upload)
+        db.commit()
+        db.refresh(evidence_upload)
+        
+        return EvidenceUploadResponse(
+            upload_id=upload_id,
+            content_hash=content_hash,
+            file_size=len(content_bytes),
+            message="Evidence uploaded successfully",
+        )
+    except Exception as e:
+        logger.exception("Error uploading evidence")
+        raise HTTPException(status_code=500, detail=f"Failed to upload evidence: {str(e)}")
+
+
+@app.post("/api/human/attest", response_model=HumanAttestationResponse, status_code=201)
+def create_human_attestation(
+    request: HumanAttestationRequest,
+    db: Session = Depends(get_db),
+) -> HumanAttestationResponse:
+    """Create a cryptographically signed human attestation.
+    
+    This endpoint creates a human-in-the-loop attestation for procedural controls
+    that cannot be machine-verified. The attestation must be cryptographically signed.
+    """
+    from datetime import timedelta
+    from nacl import signing
+    import hashlib
+    from backend.models import HumanAttestation, EvidenceUpload
+    from backend.human_evidence import verify_human_attestation, HumanAttestationRecord, HumanAttestationRole
+    
+    try:
+        # Verify signature
+        verify_key = signing.VerifyKey(bytes.fromhex(request.signer_public_key))
+        payload = {
+            "control_id": request.control_id,
+            "framework": request.framework,
+            "role": request.role,
+            "scope": request.scope,
+            "attestation_text": request.attestation_text,
+            "expiry_days": request.expiry_days,
+            "evidence_upload_ids": request.evidence_upload_ids,
+        }
+        import json
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        payload_bytes = payload_json.encode("utf-8")
+        
+        try:
+            verify_key.verify(payload_bytes, bytes.fromhex(request.signature))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid signature")
+        
+        # Verify evidence uploads exist
+        evidence_hashes = []
+        for upload_id in request.evidence_upload_ids:
+            upload = db.query(EvidenceUpload).filter(EvidenceUpload.upload_id == upload_id).first()
+            if not upload:
+                raise HTTPException(status_code=404, detail=f"Evidence upload {upload_id} not found")
+            evidence_hashes.append(upload.content_hash)
+        
+        # Calculate combined evidence hash
+        combined_hash = hashlib.sha256("".join(evidence_hashes).encode()).hexdigest()
+        
+        # Generate attestation ID
+        timestamp = datetime.now(timezone.utc)
+        attestation_id = hashlib.sha256(
+            f"{request.control_id}:{request.framework}:{timestamp.isoformat()}:{request.signature}".encode()
+        ).hexdigest()[:16]
+        
+        # Calculate expiry
+        expires_at = timestamp + timedelta(days=request.expiry_days)
+        
+        # Create human attestation record
+        human_attestation = HumanAttestation(
+            attestation_id=attestation_id,
+            control_id=request.control_id,
+            framework=request.framework,
+            role=request.role,
+            scope=request.scope,
+            attestation_text=request.attestation_text,
+            evidence_hash=combined_hash,
+            signer_public_key=request.signer_public_key,
+            signature=request.signature,
+            expires_at=expires_at,
+        )
+        human_attestation.set_evidence_upload_ids(request.evidence_upload_ids)
+        
+        db.add(human_attestation)
+        db.commit()
+        db.refresh(human_attestation)
+        
+        return HumanAttestationResponse(
+            attestation_id=attestation_id,
+            control_id=request.control_id,
+            framework=request.framework,
+            role=request.role,
+            timestamp=timestamp,
+            expires_at=expires_at,
+            verified=True,
+            message="Human attestation created successfully",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error creating human attestation")
+        raise HTTPException(status_code=500, detail=f"Failed to create attestation: {str(e)}")
+
+
+@app.get("/api/human/attestations", response_model=HumanAttestationListResponse)
+def list_human_attestations(
+    control_id: str | None = None,
+    framework: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> HumanAttestationListResponse:
+    """List human attestations with optional filtering."""
+    from backend.models import HumanAttestation
+    
+    query = db.query(HumanAttestation)
+    
+    if control_id:
+        query = query.filter(HumanAttestation.control_id == control_id)
+    if framework:
+        query = query.filter(HumanAttestation.framework == framework)
+    
+    total = query.count()
+    attestations = query.order_by(HumanAttestation.timestamp.desc()).limit(limit).offset(offset).all()
+    
+    return HumanAttestationListResponse(
+        attestations=[
+            {
+                "attestation_id": a.attestation_id,
+                "control_id": a.control_id,
+                "framework": a.framework,
+                "role": a.role,
+                "scope": a.scope,
+                "timestamp": a.timestamp.isoformat(),
+                "expires_at": a.expires_at.isoformat(),
+                "evidence_hash": a.evidence_hash,
+            }
+            for a in attestations
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

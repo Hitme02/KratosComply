@@ -27,7 +27,7 @@ export function EnhancedUpload() {
       console.error(error);
       setReport(undefined);
       setFileLoaded(false);
-      setUploadError("Unable to parse JSON. Please upload a valid aegis-report.json file.");
+      setUploadError("Unable to parse JSON. Please upload a valid compliance attestation report.");
     }
   }, [setReport, setUploadError]);
 

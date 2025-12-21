@@ -9,6 +9,13 @@ export interface Finding {
   severity: Severity;
   confidence: number;
   evidence_hash: string;
+  // Compliance metadata
+  compliance_frameworks_affected?: string[];
+  control_id?: string;
+  control_category?: string;
+  control_pass_fail_status?: string;
+  required_evidence_missing?: string;
+  auditor_explanation?: string;
 }
 
 export interface Metrics {
@@ -16,7 +23,7 @@ export interface Metrics {
   high: number;
   medium: number;
   low: number;
-  risk_score: number;
+  risk_score: number; // Legacy field - represents control failure score, not security risk
 }
 
 export interface ProjectInfo {
@@ -43,9 +50,14 @@ export interface VerificationResult {
 }
 
 export interface AttestationRecord {
-  attest_id: number;
+  id: number;
+  attest_id?: number; // Legacy field
   merkle_root: string;
   public_key_hex: string;
-  status: string;
-  timestamp: string;
+  status?: string; // Legacy field
+  timestamp?: string; // Legacy field
+  created_at: string;
+  frameworks_covered: string[];
+  control_coverage_percent: number | null;
+  human_attestations?: any[];
 }

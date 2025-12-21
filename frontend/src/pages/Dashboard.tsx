@@ -5,6 +5,7 @@ import { ReportPreview } from "@/components/ReportPreview";
 import { ComplianceSummary } from "@/components/ComplianceSummary";
 import { VerificationPanel } from "@/components/VerificationPanel";
 import { AttestationHistory } from "@/components/AttestationHistory";
+import { ControlEvidenceViewer } from "@/components/ControlEvidenceViewer";
 import { useReportStore } from "@/hooks/useReportStore";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck } from "lucide-react";
@@ -60,6 +61,8 @@ export function Dashboard() {
           </Suspense>
         </div>
       </div>
+
+      {report && <ControlEvidenceViewer />}
 
       <AttestationHistory condensed />
     </div>

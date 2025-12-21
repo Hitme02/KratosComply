@@ -17,33 +17,33 @@ export function ComplianceSummary() {
   // Collect frameworks
   const frameworks = new Set<string>();
   report.findings.forEach((f) => {
-    (f.compliance_frameworks_affected || []).forEach((fw) => frameworks.add(fw));
+    (f.compliance_frameworks_affected || []).forEach((fw: string) => frameworks.add(fw));
   });
   
   const metrics = [
-    { label: "Control Violations", value: failedControls },
-    { label: "Controls Passed", value: passedControls },
-    { label: "Compliance Readiness", value: `${controlPassRate}%` },
-    { label: "Frameworks Affected", value: frameworks.size },
+    { label: "Control Failures", value: failedControls },
+    { label: "Controls Verified", value: passedControls },
+    { label: "Audit Readiness", value: `${controlPassRate}%` },
+    { label: "Frameworks Covered", value: frameworks.size },
     { label: "Evidence Gaps", value: report.findings.length },
-    { label: "Audit Status", value: controlPassRate >= 80 ? "Ready" : "Review Required" },
+    { label: "Audit Status", value: controlPassRate >= 80 ? "Audit Ready" : "Evidence Review Required" },
   ];
 
   return (
     <Card>
       <CardContent className="grid gap-4 p-6 sm:grid-cols-3">
         {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-            <p className="text-xs uppercase tracking-widest text-muted-foreground">{metric.label}</p>
-            <p className="mt-2 text-2xl font-semibold text-foreground">{metric.value}</p>
+          <div key={metric.label} className="rounded-2xl border border-border/60 bg-muted/30 p-5">
+            <p className="text-xs font-medium uppercase tracking-wider text-foreground/70">{metric.label}</p>
+            <p className="mt-3 text-3xl font-bold text-foreground">{metric.value}</p>
           </div>
         ))}
-        <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-indigo-500/30 to-purple-500/20 p-4 text-foreground">
-          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Mode</p>
-          <p className="mt-2 flex items-center gap-2 text-lg font-semibold">
+        <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-indigo-500/30 to-purple-500/20 p-5 text-foreground">
+          <p className="text-xs font-medium uppercase tracking-wider text-foreground/70">Mode</p>
+          <p className="mt-3 flex items-center gap-2 text-lg font-bold">
             <ShieldCheck className="h-5 w-5 text-emerald-400" /> Local + Hosted Demo
           </p>
-          <p className="text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-foreground/80">
             Privacy-first agent with hosted verification attestation.
           </p>
         </div>

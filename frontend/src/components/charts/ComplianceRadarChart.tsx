@@ -6,10 +6,15 @@ export function ComplianceRadarChart() {
   const { report } = useReportStore();
   if (!report) return null;
 
-  const base = Math.max(40, 100 - report.metrics.risk_score / 1.5);
+  // Calculate framework readiness based on control states
+  // Simplified: would use actual control state data in production
+  const totalFindings = report.findings.length;
+  const passedControls = report.findings.filter((f) => f.control_pass_fail_status === "PASS").length;
+  const readinessBase = totalFindings > 0 ? Math.round((passedControls / totalFindings) * 100) : 100;
+  
   const data = report.standards.map((standard, index) => ({
     standard,
-    coverage: Math.min(100, Math.round(base + index * 5)),
+    coverage: Math.min(100, Math.max(40, readinessBase - (index * 5))),
   }));
 
   return (

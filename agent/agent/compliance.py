@@ -1,5 +1,8 @@
 """Compliance Control Abstraction Layer for KratosComply.
 
+DEPRECATED: This module is maintained for backward compatibility.
+New code should use agent.control_model for the unified control model.
+
 Every detection rule must map to a specific compliance control,
 legal requirement, or audit verifiability requirement.
 """
@@ -9,33 +12,26 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-
-class ControlCategory(str, Enum):
-    """Categories of compliance controls."""
-
-    ACCESS_CONTROL = "Access Control"
-    ENCRYPTION = "Encryption"
-    LOGGING = "Logging"
-    RETENTION = "Retention"
-    CONSENT = "Consent"
-    SECRETS_MANAGEMENT = "Secrets Management"
-    INFRASTRUCTURE_SECURITY = "Infrastructure Security"
-    DATA_PROTECTION = "Data Protection"
-
-
-class EvidenceType(str, Enum):
-    """Types of evidence that can be generated."""
-
-    CONFIG_PROOF = "config_proof"  # Configuration file evidence
-    CODE_PROOF = "code_proof"  # Source code evidence
-    POLICY_PROOF = "policy_proof"  # Policy document evidence
-    LOG_PROOF = "log_proof"  # Audit log evidence
-    METADATA_PROOF = "metadata_proof"  # Repository metadata evidence
+# Import the new unified control model
+from .control_model import (
+    ComplianceControl as UnifiedComplianceControl,
+    ControlCategory,
+    ControlState,
+    ControlType,
+    EvidenceType,
+    VerificationMethod,
+    get_control,
+    get_controls_by_framework,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ComplianceControl:
-    """Represents a specific compliance control requirement."""
+    """Legacy compliance control representation.
+
+    DEPRECATED: Use agent.control_model.ComplianceControl instead.
+    This is maintained for backward compatibility with existing code.
+    """
 
     control_id: str  # e.g., "SOC2-CC6.1", "ISO27001-A.9.2", "DPDP-Section-8"
     control_category: ControlCategory

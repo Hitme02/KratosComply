@@ -21,7 +21,7 @@ export function ReportPreview() {
       <Card className="h-full">
         <CardHeader>
           <CardTitle>No compliance evidence report loaded</CardTitle>
-          <CardDescription>Upload a compliance evidence report to see control violations and evidence gaps.</CardDescription>
+          <CardDescription>Upload a compliance evidence report to see evidence gaps and control failures.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-3 rounded-2xl border border-dashed border-border/60 p-6 text-muted-foreground">
@@ -41,7 +41,7 @@ export function ReportPreview() {
             <CardTitle>{report.project.name}</CardTitle>
             <CardDescription className="flex flex-wrap gap-2 text-sm text-muted-foreground">
               <span>Path: {report.project.path}</span>
-              <span>• Control Violations: {report.findings.length}</span>
+              <span>• Evidence Gaps: {report.findings.length}</span>
               <span>• Frameworks: {report.standards.join(", ")}</span>
             </CardDescription>
           </div>
@@ -59,7 +59,7 @@ export function ReportPreview() {
         </div>
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            <AlertTriangle className="h-4 w-4" /> Control Violations & Evidence Gaps
+            <AlertTriangle className="h-4 w-4" /> Evidence Gaps & Control Failures
           </div>
           <div className="space-y-3">
             {report.findings.slice(0, 6).map((finding) => (
@@ -68,15 +68,15 @@ export function ReportPreview() {
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
-                className="rounded-xl border border-border/60 bg-muted/20 p-4"
+                className="rounded-xl border border-border/60 bg-muted/30 p-5"
               >
                 <div className="flex items-center justify-between text-sm">
-                  <p className="font-semibold text-foreground">{finding.file}</p>
-                  <span className="text-xs text-muted-foreground">Line {finding.line ?? "-"}</span>
+                  <p className="font-bold text-foreground">{finding.file}</p>
+                  <span className="text-xs font-medium text-foreground/60">Line {finding.line ?? "-"}</span>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">{finding.snippet}</p>
+                <p className="mt-2 text-sm text-foreground/80">{finding.snippet}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  <span className={cn("rounded-full px-2 py-0.5 font-semibold", severityStyles[finding.severity])}>
+                  <span className={cn("rounded-full px-2.5 py-1 font-bold", severityStyles[finding.severity])}>
                     {finding.severity.toUpperCase()}
                   </span>
                   <Badge variant="outline">Control: {finding.control_id || "UNKNOWN"}</Badge>
@@ -86,7 +86,7 @@ export function ReportPreview() {
                   ))}
                 </div>
                 {finding.auditor_explanation && (
-                  <p className="mt-2 text-xs text-muted-foreground italic">{finding.auditor_explanation}</p>
+                  <p className="mt-3 text-xs text-foreground/70 italic">{finding.auditor_explanation}</p>
                 )}
               </motion.div>
             ))}
@@ -102,9 +102,9 @@ export function ReportPreview() {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-gradient-to-br from-white/5 to-white/0 p-4">
-      <p className="text-xs uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-foreground break-all">{value}</p>
+    <div className="rounded-xl border border-border/60 bg-gradient-to-br from-white/5 to-white/0 p-5">
+      <p className="text-xs font-medium uppercase tracking-wider text-foreground/70">{label}</p>
+      <p className="mt-3 text-lg font-bold text-foreground break-all">{value}</p>
     </div>
   );
 }

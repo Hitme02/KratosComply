@@ -69,7 +69,7 @@ export function VerificationPanel() {
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-muted-foreground">Public key (hex)</label>
+          <label className="text-sm font-semibold text-foreground/90">Public key (hex)</label>
           <Input
             placeholder="Paste the agent's public key"
             value={publicKeyHex}
@@ -127,11 +127,11 @@ export function VerificationPanel() {
 
 function StatusCard({ title, value, icon }: { title: string; value: string; icon: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
+    <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 p-5">
       {icon}
       <div>
-        <p className="text-xs uppercase tracking-widest text-muted-foreground">{title}</p>
-        <p className="text-base font-semibold text-foreground">{value}</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-foreground/70">{title}</p>
+        <p className="text-base font-bold text-foreground">{value}</p>
       </div>
     </div>
   );

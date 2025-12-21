@@ -50,6 +50,7 @@ class Finding:
     control_pass_fail_status: str
     required_evidence_missing: str
     auditor_explanation: str
+    control_state: str | None = None  # VERIFIED_MACHINE, VERIFIED_SYSTEM, MISSING_EVIDENCE, etc.
 
 
 def _canonical_evidence_payload(raw: RawFinding) -> str:
@@ -70,6 +71,7 @@ def _canonical_evidence_payload(raw: RawFinding) -> str:
 
 def finalize_findings(
     raw_findings: list[RawFinding],
+    system_evidence: list[Any] | None = None,
 ) -> tuple[list[Finding], dict[str, RawFinding]]:
     """Assign identifiers and evidence hashes deterministically.
     
@@ -103,6 +105,23 @@ def finalize_findings(
         frameworks = get_frameworks_for_finding_type(rf.type)
         control_id = control.control_id if control else "UNKNOWN"
         control_category = control.control_category.value if control else "Unknown"
+        control_status = get_control_status(rf.type)
+        
+        # Determine control state based on finding type and verification method
+        control_state = None
+        if control:
+            from .control_model import ControlState, VerificationMethod
+            # If this is a violation finding (FAIL), evidence is missing
+            if control_status == "FAIL":
+                control_state = ControlState.MISSING_EVIDENCE.value
+            else:
+                # Evidence is present - determine verification method
+                if control.verification_method == VerificationMethod.MACHINE:
+                    control_state = ControlState.VERIFIED_MACHINE.value
+                elif control.verification_method == VerificationMethod.CONFIGURATION:
+                    control_state = ControlState.VERIFIED_SYSTEM.value
+                else:
+                    control_state = ControlState.MISSING_EVIDENCE.value
         
         finalized.append(
             Finding(
@@ -117,9 +136,10 @@ def finalize_findings(
                 compliance_frameworks_affected=frameworks,
                 control_id=control_id,
                 control_category=control_category,
-                control_pass_fail_status=get_control_status(rf.type),
+                control_pass_fail_status=control_status,
                 required_evidence_missing=get_required_evidence_missing(rf.type),
                 auditor_explanation=get_auditor_explanation(rf.type),
+                control_state=control_state,
             )
         )
         raw_lookup[fid] = rf

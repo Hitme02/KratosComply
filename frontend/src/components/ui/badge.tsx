@@ -6,17 +6,18 @@ export function Badge({
   className,
 }: {
   children: React.ReactNode;
-  variant?: "default" | "outline" | "success" | "critical";
+  variant?: "default" | "outline" | "secondary" | "success" | "critical";
   className?: string;
 }) {
   const variants: Record<string, string> = {
-    default: "bg-secondary/60 text-secondary-foreground",
-    outline: "border border-border/70 text-muted-foreground",
-    success: "bg-emerald-500/20 text-emerald-300",
-    critical: "bg-red-500/20 text-red-300",
+    default: "bg-secondary/80 text-secondary-foreground font-medium",
+    outline: "border border-border/80 text-foreground/90 font-medium",
+    secondary: "bg-muted/80 text-foreground/90 font-medium",
+    success: "bg-emerald-500/25 text-emerald-200 font-semibold",
+    critical: "bg-red-500/25 text-red-200 font-semibold",
   };
   return (
-    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold", variants[variant], className)}>
+    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs", variants[variant], className)}>
       {children}
     </span>
   );

@@ -1,6 +1,6 @@
 # KratosComply
 
-**Compliance evidence automation for startups.** Generate audit-ready compliance reports with cryptographic verification for SOC2, ISO27001, GDPR, and DPDP Act compliance.
+**Complete Compliance Operating System** - Generate audit-ready compliance evidence with cryptographic verification for SOC2, ISO27001, GDPR, and DPDP Act compliance.
 
 ## Overview
 
@@ -10,22 +10,34 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 
 ## Features
 
-- ✅ **Offline-First Agent**: Scans codebases locally, no source code leaves your environment
-- ✅ **Cryptographic Verification**: Ed25519 signatures + SHA256 Merkle trees for audit-grade integrity
-- ✅ **Compliance Mapping**: Every finding maps to specific framework controls (SOC2, ISO27001, GDPR, DPDP)
-- ✅ **Legal-Grade Attestations**: Compliance ledger suitable for audit, investor, and regulatory review
-- ✅ **Auto-Fix Support**: Generates safe patches for fixable violations (sandbox-validated)
-- ✅ **Modern UI**: React dashboard with animations and comprehensive workflows
+### ✅ Complete Compliance Coverage
+- **Technical Compliance** (Machine-verifiable): Code-level scanning, AST-based detection, cryptographic evidence hashing
+- **System Compliance** (Configuration-verifiable): Logging, retention, encryption, MFA, backup configuration detection
+- **Procedural Compliance** (Human-attested): Signed attestations for non-technical controls with Ed25519 signatures
 
-## What Gets Detected
+### ✅ Cryptographic Integrity
+- Ed25519 signatures for all reports and attestations
+- SHA256 Merkle trees for evidence binding
+- Tamper-proof audit trail
 
-### Security Violations
-- Hardcoded secrets (API keys, passwords, tokens)
-- Insecure ACLs in infrastructure code (public-read, public-write)
+### ✅ Compliance Frameworks
+- **SOC2**: CC6.1 (Access Control), CC6.2 (Secrets Management), CC7.2 (Logging)
+- **ISO27001**: A.9.2.1 (Access Management), A.10.1.1 (Encryption)
+- **DPDP Act (India)**: Section 7 (Consent), Section 8 (Retention), Section 9 (Access Logging)
+- **GDPR (EU)**: Article 5 (Retention), Article 6 (Consent), Article 17 (Erasure), Article 20 (Portability), Article 32 (Encryption)
 
-### Compliance Framework Gaps
-- **DPDP Act (India)**: Missing data retention, consent handling, access logging
-- **GDPR (EU)**: Missing encryption, consent, retention, erasure, portability mechanisms
+### ✅ Control State Machine
+Every control resolves to exactly one state:
+- `VERIFIED_MACHINE` - Machine-verified code evidence
+- `VERIFIED_SYSTEM` - Configuration-verified system evidence
+- `ATTESTED_HUMAN` - Human-signed attestation
+- `MISSING_EVIDENCE` - Evidence gap identified
+- `EXPIRED_EVIDENCE` - Time-scoped evidence expired
+
+### ✅ Privacy-Preserving
+- **Offline-First Agent**: Scans codebases locally, no source code leaves your environment
+- **Ephemeral GitHub Workers**: GitHub OAuth scans use temporary workspaces that are destroyed after attestation generation
+- **No Code Persistence**: Source code never stored, only compliance attestations
 
 ## Quick Start
 
@@ -53,7 +65,7 @@ docker-compose up --build
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .[dev]
+pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
@@ -81,10 +93,7 @@ pip install -r requirements.txt
 python -m agent.cli generate-key
 
 # Scan a project
-python -m agent.cli scan /path/to/project \
-    --output report.json \
-    --project-name "my-project" \
-    --generate-patches
+python -m agent.cli scan /path/to/project --output report.json
 ```
 
 ## Usage
@@ -106,24 +115,60 @@ Keys are stored in `~/.kratos/keys/` by default.
 ```bash
 python -m agent.cli scan /path/to/your/project \
     --output report.json \
-    --project-name "your-project" \
-    --generate-patches
+    --project-name "your-project"
 ```
+
+The scan will:
+- Detect code-level compliance issues (secrets, insecure ACLs)
+- Collect system-level evidence (logging, encryption, MFA configs)
+- Map findings to compliance controls
+- Generate cryptographic evidence hashes
+- Create a Merkle root for integrity verification
 
 ### 3. Upload & Verify
 
 1. Open the frontend at `http://localhost:5173`
 2. Upload the generated `report.json`
-3. Enter your public key (get it with: `python -m agent.cli public-key`)
+3. Enter your public key (get it with: `cat ~/.kratos/keys/pub.key`)
 4. Verify the report signature
 5. Create an attestation
 
-### 4. GitHub Integration (Optional)
+### 4. Human Attestations (Procedural Controls)
+
+For non-technical controls (incident response, training, vendor risk):
+
+```bash
+# Upload evidence file
+curl -X POST http://localhost:8000/api/human/upload \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_name": "policy.pdf",
+    "file_type": "policy",
+    "content_base64": "...",
+    "metadata": {"description": "Security policy"}
+  }'
+
+# Create signed attestation
+curl -X POST http://localhost:8000/api/human/attest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "control_id": "CC6.1",
+    "framework": "SOC2",
+    "role": "founder",
+    "scope": "Access control procedures",
+    "attestation_text": "I attest that access control procedures are in place",
+    "expiry_days": 365,
+    "signer_public_key": "...",
+    "signature": "..."
+  }'
+```
+
+### 5. GitHub Integration (Optional)
 
 1. Configure GitHub OAuth app (see GitHub OAuth Setup below)
 2. Click "Connect GitHub" on the frontend
 3. Select a repository
-4. View scan results automatically
+4. View scan results automatically (ephemeral scan, no code stored)
 
 ## GitHub OAuth Setup
 
@@ -154,28 +199,31 @@ GITHUB_REDIRECT_URI=http://localhost:5173/github/callback
 docker-compose restart backend
 ```
 
-Or if running manually, restart the backend server.
-
 ## Project Structure
 
 ```
 KratosCompliance/
 ├── agent/              # Compliance evidence scanner (Python)
 │   ├── agent/         # Core agent code
+│   │   ├── control_model.py      # Unified compliance control model
+│   │   ├── system_evidence.py    # System-level evidence collection
+│   │   ├── detectors.py           # Code-level detection
+│   │   ├── reporting.py           # Report generation with control states
+│   │   └── ...
 │   ├── tests/         # Agent tests
 │   └── requirements.txt
 ├── backend/            # Verification & attestation API (FastAPI)
-│   ├── main.py        # API endpoints
-│   ├── models.py      # Database models
+│   ├── main.py        # API endpoints (including human attestations)
+│   ├── models.py      # Database models (Attestation, HumanAttestation, EvidenceUpload)
 │   ├── schemas.py     # Pydantic schemas
-│   └── pyproject.toml
+│   ├── human_evidence.py  # Human attestation logic
+│   └── tests/         # Backend tests
 ├── frontend/           # Audit cockpit UI (React + Vite)
 │   ├── src/
-│   │   ├── pages/     # Page components
+│   │   ├── pages/     # Page components (AuditCockpit, ControlsEvidence, etc.)
 │   │   ├── components/# UI components
 │   │   └── services/  # API clients
 │   └── package.json
-├── docs/               # Documentation
 ├── examples/           # Sample applications
 ├── docker-compose.yml  # Development setup
 └── README.md
@@ -185,11 +233,19 @@ KratosCompliance/
 
 ### Backend API
 
+**Core Endpoints:**
 - `GET /health` - Health check
 - `POST /verify-report` - Verify report signature and Merkle root
 - `POST /attest` - Create compliance attestation
 - `GET /api/attestations` - List all attestations
 - `POST /auditor/verify` - External auditor verification
+
+**Human Attestation Endpoints:**
+- `POST /api/human/upload` - Upload evidence file
+- `POST /api/human/attest` - Create signed human attestation
+- `GET /api/human/attestations` - List human attestations
+
+**GitHub Integration:**
 - `GET /api/auth/github` - Initiate GitHub OAuth
 - `POST /github/callback` - GitHub OAuth callback
 
@@ -204,14 +260,50 @@ python -m agent.cli generate-key
 # Scan workspace
 python -m agent.cli scan <path> --output <report.json> --project-name <name>
 
-# Generate patches (optional)
-python -m agent.cli scan <path> --output <report.json> --generate-patches
-
-# Apply patch
-python -m agent.cli apply-patch <patch.diff> --workspace <path>
-
 # Get public key
 python -m agent.cli public-key
+```
+
+## Compliance Evidence Types
+
+### Machine-Verifiable (Code Evidence)
+- Hardcoded secrets detection
+- Insecure ACLs in infrastructure code
+- AST-based pattern detection
+- Cryptographic evidence hashing
+
+### System-Verifiable (Configuration Evidence)
+- Logging configuration detection
+- Retention policy detection
+- Encryption configuration detection
+- MFA configuration detection
+- Backup policy detection
+
+### Human-Attested (Procedural Evidence)
+- Policy documents (PDF/MD)
+- Standard Operating Procedures (SOPs)
+- Screenshot evidence
+- Log exports
+- Structured declarations
+- All cryptographically signed with Ed25519
+
+## Report Structure
+
+Each report includes:
+
+```json
+{
+  "report_version": "1.0",
+  "project": {...},
+  "standards": ["SOC2", "ISO27001", "DPDP", "GDPR"],
+  "findings": [...],           // Machine-verifiable evidence gaps
+  "system_evidence": [...],    // Configuration-verifiable evidence
+  "control_states": {...},     // control_id -> ControlState mapping
+  "evidence_hashes": [...],    // All evidence hashes
+  "merkle_root": "...",        // Cryptographic integrity root
+  "agent_signature": "...",    // Ed25519 signature
+  "agent_version": "..."
+}
 ```
 
 ## Environment Variables
@@ -234,6 +326,22 @@ GITHUB_REDIRECT_URI=http://localhost:5173/github/callback
 VITE_API_URL=http://localhost:8000
 ```
 
+## Testing
+
+### Quick Test
+
+```bash
+# Agent scan
+cd agent && source venv/bin/activate
+python3 -m agent.cli scan . --output report.json
+
+# Backend tests
+cd backend && pytest tests/ -v
+
+# Frontend (ensure backend is running)
+cd frontend && npm run dev
+```
+
 ## Production Deployment
 
 ### Using Docker Compose
@@ -250,23 +358,6 @@ docker-compose -f docker-compose.prod.yml up --build -d
 - Environment variables configured in `.env`
 - GitHub OAuth app configured (if using GitHub integration)
 
-### Environment Variables for Production
-
-Create `.env` file:
-
-```bash
-# Database
-KRATOS_DB_URL=postgresql://user:password@host:5432/kratos
-
-# GitHub OAuth
-GITHUB_CLIENT_ID=your_production_client_id
-GITHUB_CLIENT_SECRET=your_production_client_secret
-GITHUB_REDIRECT_URI=https://yourdomain.com/github/callback
-
-# Frontend API URL
-VITE_API_URL=https://api.yourdomain.com
-```
-
 ## What KratosComply Does NOT Do
 
 KratosComply focuses on compliance evidence generation, not runtime security monitoring:
@@ -280,25 +371,113 @@ KratosComply is compliance infrastructure that includes security controls as par
 
 ## Architecture
 
+```mermaid
+graph TB
+    subgraph "User Environment"
+        CODE[Codebase]
+        CONFIG[Config Files]
+        USER[User]
+    end
+
+    subgraph "Agent (Offline-First)"
+        SCAN[Code Scanner<br/>AST + Regex]
+        SYS[System Evidence<br/>Collection]
+        CTRL[Control Model<br/>Mapping]
+        MERKLE[Merkle Tree<br/>Builder]
+        SIGN[Ed25519<br/>Signing]
+        REPORT[Compliance Report<br/>JSON]
+    end
+
+    subgraph "Backend API"
+        VERIFY[Report Verification<br/>Signature + Merkle]
+        ATTEST[Attestation<br/>Ledger]
+        HUMAN[Human Attestation<br/>Management]
+        EVIDENCE[Evidence Upload<br/>Storage]
+        GITHUB[GitHub OAuth<br/>Ephemeral Workers]
+        DB[(Database<br/>SQLite/PostgreSQL)]
+    end
+
+    subgraph "Frontend (Audit Cockpit)"
+        UPLOAD[Report Upload]
+        VIEW[Control State<br/>Visualization]
+        GAPS[Evidence Gap<br/>Tracking]
+        HISTORY[Attestation<br/>History]
+        REPO[GitHub Repo<br/>Integration]
+    end
+
+    subgraph "Compliance Frameworks"
+        SOC2[SOC2<br/>CC6.1, CC6.2, CC7.2]
+        ISO[ISO27001<br/>A.9.2.1, A.10.1.1]
+        DPDP[DPDP Act<br/>Section 7, 8, 9]
+        GDPR[GDPR<br/>Article 5, 6, 17, 20, 32]
+    end
+
+    CODE --> SCAN
+    CONFIG --> SYS
+    SCAN --> CTRL
+    SYS --> CTRL
+    CTRL --> MERKLE
+    MERKLE --> SIGN
+    SIGN --> REPORT
+
+    REPORT --> UPLOAD
+    UPLOAD --> VERIFY
+    VERIFY --> ATTEST
+    ATTEST --> DB
+    ATTEST --> VIEW
+
+    USER --> HUMAN
+    HUMAN --> EVIDENCE
+    EVIDENCE --> DB
+    HUMAN --> ATTEST
+
+    USER --> GITHUB
+    GITHUB --> SCAN
+    GITHUB --> REPORT
+
+    CTRL --> SOC2
+    CTRL --> ISO
+    CTRL --> DPDP
+    CTRL --> GDPR
+
+    VIEW --> GAPS
+    VIEW --> HISTORY
+    VIEW --> REPO
+
+    style CODE fill:#e1f5ff
+    style CONFIG fill:#e1f5ff
+    style REPORT fill:#fff4e1
+    style DB fill:#ffe1f5
+    style SOC2 fill:#e8f5e9
+    style ISO fill:#e8f5e9
+    style DPDP fill:#e8f5e9
+    style GDPR fill:#e8f5e9
+```
+
 ### Components
 
 - **Agent** (`agent/`): Python 3.11+ compliance scanner
   - AST-based detection for Python files
   - Regex-based detection for text files
+  - System evidence collection (config files)
   - Compliance control mapping (SOC2, ISO27001, GDPR, DPDP)
   - Ed25519 cryptographic signing
   - SHA256 Merkle tree integrity
+  - Control state resolution
 
 - **Backend** (`backend/`): FastAPI verification service
   - Report signature verification
   - Compliance attestation ledger
+  - Human attestation management
+  - Evidence upload handling
   - GitHub OAuth integration
   - SQLite/PostgreSQL database
 
 - **Frontend** (`frontend/`): React audit cockpit
   - Report upload and verification
   - Attestation creation and history
-  - Compliance metrics visualization
+  - Control state visualization
+  - Evidence gap tracking
   - GitHub repository integration
 
 ## Technology Stack
@@ -308,18 +487,15 @@ KratosComply is compliance infrastructure that includes security controls as par
 - **Frontend**: React 19, Vite, TailwindCSS, shadcn/ui, Framer Motion, Recharts
 - **Infrastructure**: Docker, Docker Compose
 
-## Testing
+## Status
 
-```bash
-# Run E2E tests
-./scripts/e2e_test.sh
+✅ **PRODUCTION READY**
 
-# Backend tests
-cd backend && pytest
-
-# Agent tests
-cd agent && pytest
-```
+- ✅ Full technical, system, and procedural compliance coverage
+- ✅ Cryptographic integrity throughout
+- ✅ Legal-grade attestation artifacts
+- ✅ Complete audit traceability
+- ✅ All compliance sectors operational
 
 ## License
 

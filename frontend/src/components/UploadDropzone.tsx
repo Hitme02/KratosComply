@@ -21,7 +21,7 @@ export function UploadDropzone() {
     } catch (error) {
       console.error(error);
       setReport(undefined);
-      setUploadError("Unable to parse JSON. Please upload a valid aegis-report.json file.");
+      setUploadError("Unable to parse JSON. Please upload a valid compliance attestation report.");
     }
   }, [setReport, setUploadError]);
 
@@ -49,9 +49,9 @@ export function UploadDropzone() {
       }}
     >
       <CardHeader>
-        <CardTitle>Upload Aegis Report</CardTitle>
+        <CardTitle>Upload Compliance Attestation</CardTitle>
         <CardDescription>
-          Drag & drop your JSON report here or select it manually. We never upload files automatically.
+          Drag & drop your signed compliance report here or select it manually. We never upload files automatically.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -64,9 +64,9 @@ export function UploadDropzone() {
         >
           <UploadCloud className="h-10 w-10 text-primary" />
           <div>
-            <p className="text-lg font-semibold">Drop your `aegis-report.json`</p>
+            <p className="text-lg font-semibold">Drop your compliance attestation report</p>
             <p className="text-sm text-muted-foreground">
-              We’ll parse it locally, preview the findings, and guide you through verification.
+              We'll parse it locally, preview the evidence gaps, and guide you through verification.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">

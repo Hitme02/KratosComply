@@ -26,8 +26,8 @@ export function Alert({
     >
       {icons[type]}
       <div>
-        <p className="font-semibold text-foreground">{title}</p>
-        {description && <p className="text-muted-foreground">{description}</p>}
+        <p className="font-bold text-foreground">{title}</p>
+        {description && <p className="text-foreground/80">{description}</p>}
       </div>
     </div>
   );
