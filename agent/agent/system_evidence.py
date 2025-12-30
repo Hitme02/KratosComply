@@ -351,38 +351,44 @@ def detect_aws_security_configuration(workspace: Path) -> list[SystemEvidence]:
         except Exception:
             continue
         
-        # Check for CloudTrail
+        # Check for CloudTrail - applies to multiple frameworks
         if any(re.search(p, content, re.IGNORECASE) for p in cloudtrail_patterns):
-            evidence_list.append(SystemEvidence(
-                control_id="CC7.2",
-                framework="SOC2",
-                evidence_type=EvidenceType.CONFIG_PROOF,
-                evidence_present=True,
-                evidence_source=str(file_path.relative_to(workspace)),
-                evidence_data={"provider": "aws", "service": "cloudtrail"}
-            ))
+            # Logging applies to SOC2, ISO27001, GDPR, DPDP, HIPAA, PCI-DSS, NIST-CSF
+            for framework in ["SOC2", "ISO27001", "GDPR", "DPDP", "HIPAA", "PCI-DSS", "NIST-CSF"]:
+                evidence_list.append(SystemEvidence(
+                    control_id="CC7.2" if framework == "SOC2" else "A.10.1.1" if framework == "ISO27001" else "Section-9" if framework == "DPDP" else "Article-30" if framework == "GDPR" else "164.312" if framework == "HIPAA" else "10.2" if framework == "PCI-DSS" else "PR.DS-1",
+                    framework=framework,
+                    evidence_type=EvidenceType.CONFIG_PROOF,
+                    evidence_present=True,
+                    evidence_source=str(file_path.relative_to(workspace)),
+                    evidence_data={"provider": "aws", "service": "cloudtrail"}
+                ))
         
-        # Check for S3 encryption
+        # Check for S3 encryption - applies to multiple frameworks
         if any(re.search(p, content, re.IGNORECASE) for p in s3_encryption_patterns):
-            evidence_list.append(SystemEvidence(
-                control_id="A.10.1.1",
-                framework="ISO27001",
-                evidence_type=EvidenceType.CONFIG_PROOF,
-                evidence_present=True,
-                evidence_source=str(file_path.relative_to(workspace)),
-                evidence_data={"provider": "aws", "service": "s3", "encryption": "enabled"}
-            ))
+            # Encryption applies to all frameworks
+            for framework in ["SOC2", "ISO27001", "GDPR", "DPDP", "HIPAA", "PCI-DSS", "NIST-CSF"]:
+                evidence_list.append(SystemEvidence(
+                    control_id="CC6.1" if framework == "SOC2" else "A.10.1.1" if framework == "ISO27001" else "Article-32" if framework == "GDPR" else "Section-8" if framework == "DPDP" else "164.312" if framework == "HIPAA" else "3.4" if framework == "PCI-DSS" else "PR.DS-1",
+                    framework=framework,
+                    evidence_type=EvidenceType.CONFIG_PROOF,
+                    evidence_present=True,
+                    evidence_source=str(file_path.relative_to(workspace)),
+                    evidence_data={"provider": "aws", "service": "s3", "encryption": "enabled"}
+                ))
         
-        # Check for IAM MFA
+        # Check for IAM MFA - applies to multiple frameworks
         if any(re.search(p, content, re.IGNORECASE) for p in iam_mfa_patterns):
-            evidence_list.append(SystemEvidence(
-                control_id="A.9.2.1",
-                framework="ISO27001",
-                evidence_type=EvidenceType.CONFIG_PROOF,
-                evidence_present=True,
-                evidence_source=str(file_path.relative_to(workspace)),
-                evidence_data={"provider": "aws", "service": "iam", "mfa": "enabled"}
-            ))
+            # MFA applies to SOC2, ISO27001, HIPAA, PCI-DSS, NIST-CSF
+            for framework in ["SOC2", "ISO27001", "HIPAA", "PCI-DSS", "NIST-CSF"]:
+                evidence_list.append(SystemEvidence(
+                    control_id="CC6.1" if framework == "SOC2" else "A.9.2.1" if framework == "ISO27001" else "164.308" if framework == "HIPAA" else "8.2" if framework == "PCI-DSS" else "PR.AC-1",
+                    framework=framework,
+                    evidence_type=EvidenceType.CONFIG_PROOF,
+                    evidence_present=True,
+                    evidence_source=str(file_path.relative_to(workspace)),
+                    evidence_data={"provider": "aws", "service": "iam", "mfa": "enabled"}
+                ))
     
     return evidence_list
 

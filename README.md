@@ -16,8 +16,8 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 
 ### ✅ Complete Compliance Coverage
 
-- **Technical Compliance** (Machine-verifiable): Code-level scanning, AST-based detection, cloud provider secrets, infrastructure-as-code security, container security, API security, database security, CI/CD security, dependency compliance, cryptographic evidence hashing
-- **System Compliance** (Configuration-verifiable): Logging, retention, encryption, MFA, backup configuration detection, AWS/GCP/Azure security settings
+- **Technical Compliance** (Machine-verifiable): Advanced multi-technique detection using AST parsing, dependency analysis, API route analysis, database schema analysis, configuration parsing, and regex patterns. Detects hardcoded secrets (including cloud provider credentials), insecure ACLs, SQL injection risks, unencrypted database connections, API authentication gaps, container security issues, CI/CD vulnerabilities, and dependency compliance issues.
+- **System Compliance** (Configuration-verifiable): Configuration detection for logging, retention, encryption, MFA, backup policies, and cloud provider security settings (AWS CloudTrail, S3 encryption, IAM MFA, GCP/Azure equivalents).
 - **Procedural Compliance** (Human-attested): Signed attestations for non-technical controls with Ed25519 signatures
 
 ### ✅ Cryptographic Integrity
@@ -333,13 +333,13 @@ python -m agent.cli scan /path/to/your/project \
 ```
 
 The scan will:
-- **Detect code-level compliance issues**: Hardcoded secrets (including cloud provider credentials), insecure ACLs, SQL injection risks, unencrypted database connections, API authentication gaps
+- **Detect code-level compliance issues**: Uses advanced multi-technique detection (AST analysis, dependency checking, API route parsing, database schema analysis) to find hardcoded secrets (including cloud provider credentials), insecure ACLs, SQL injection risks, unencrypted database connections, API authentication gaps, consent handling mechanisms, data portability endpoints, access logging implementations, and right-to-erasure functionality
 - **Infrastructure-as-Code security**: Terraform/CloudFormation misconfigurations (public S3 buckets, unencrypted RDS, open security groups)
 - **Container security**: Docker and Kubernetes security issues (root user, missing security contexts, secrets in manifests)
 - **CI/CD pipeline security**: Secrets in workflows, unsigned artifacts
-- **Dependency compliance**: Missing lock files, unpinned dependencies
-- **Collect system-level evidence**: Logging, encryption, MFA configs, AWS CloudTrail, S3 encryption, IAM MFA
-- **Map findings to compliance controls**: All findings mapped to specific framework controls
+- **Dependency compliance**: Missing lock files, unpinned dependencies, compliance library detection (Supabase, Auth0, etc.)
+- **Collect system-level evidence**: Logging, encryption, MFA configs, AWS CloudTrail, S3 encryption, IAM MFA, retention policies
+- **Map findings to compliance controls**: All findings mapped to specific framework controls across all 7 supported frameworks
 - **Generate cryptographic evidence hashes**: SHA256 hashes for all evidence
 - **Create a Merkle root**: Cryptographic proof of report integrity
 
@@ -514,13 +514,26 @@ Full API documentation available at `http://localhost:8000/docs` when the backen
 ## Verification Methods
 
 ### Machine-Verified
-Fully automated verification through AST parsing and regex patterns. Examples: hardcoded secrets, insecure ACLs, consent handling code.
+Fully automated verification using advanced multi-technique detection:
+
+1. **AST-Based Function Call Analysis**: Analyzes actual function calls, imports, and decorators in code (e.g., `consent_handler()`, `@require_consent`, `export_user_data()`)
+2. **Dependency/Library Analysis**: Detects compliance features via installed packages (e.g., Supabase, Auth0 provide built-in GDPR features)
+3. **API Route/Endpoint Analysis**: Parses actual API routes to detect compliance endpoints (e.g., `/api/consent`, `/api/export-data`, `/api/delete-account`)
+4. **Database Schema Analysis**: Analyzes migrations and schemas for compliance fields (e.g., `consent` table, `audit_log` table, `deleted_at` column)
+5. **Configuration File Parsing**: Parses YAML/JSON/TOML configs for compliance settings (e.g., `retention: { days: 90 }`, `audit: { enabled: true }`)
+6. **Environment Variable Analysis**: Checks for compliance-related env vars (e.g., `ENABLE_AUDIT_LOGGING=true`, `DATA_RETENTION_DAYS=90`)
+7. **Middleware/Decorator Analysis**: Detects compliance via decorators and middleware patterns
+8. **Regex Pattern Matching**: Traditional pattern matching for secrets, ACLs, and security misconfigurations
+
+**Benefits**: Lower false positive rate, detects actual implementations (not just keywords), works with different naming conventions, detects compliance handled by external services.
+
+Examples: hardcoded secrets, insecure ACLs, consent handling code, data portability endpoints, access logging implementations.
 
 ### System-Verified
-Configuration detection (flags, settings). Examples: logging enabled, retention duration, encryption settings, MFA configuration.
+Configuration detection (flags, settings). Examples: logging enabled, retention duration, encryption settings, MFA configuration, AWS CloudTrail logging, S3 encryption, IAM MFA enforcement.
 
 ### Human-Attested
-Requires human declaration with cryptographic signature. Examples: incident response procedures, access review policies, training records.
+Requires human declaration with cryptographic signature. Examples: incident response procedures, access review policies, training records, vendor risk assessments.
 
 **Important**: KratosComply does NOT claim "full automation" for compliance. Many controls require human attestation. The system clearly distinguishes between machine-verified, system-verified, and human-attested evidence.
 

@@ -21,6 +21,21 @@ from .config import (
     CLOUD_SECRET_PATTERNS,
 )
 from .findings import RawFinding
+from .advanced_detectors import (
+    detect_consent_via_dependencies,
+    detect_consent_via_api_routes,
+    detect_consent_via_ast,
+    detect_consent_via_database_schema,
+    detect_data_portability_via_api_routes,
+    detect_data_portability_via_ast,
+    detect_access_logging_via_ast,
+    detect_access_logging_via_config,
+    detect_retention_via_config,
+    detect_right_to_erasure_via_api_routes,
+    detect_right_to_erasure_via_ast,
+    detect_encryption_via_dependencies,
+    detect_encryption_via_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +116,9 @@ def scan_workspace(root: Path) -> list[RawFinding]:
     findings.extend(_scan_cicd_security(root))
     findings.extend(_scan_dependencies(root))
     
-    # Enhanced detection capabilities
-    findings.extend(_scan_cloud_secrets(root))
-    findings.extend(_scan_terraform_security(root))
-    findings.extend(_scan_container_security(root))
-    findings.extend(_scan_api_security(root))
-    findings.extend(_scan_database_security(root))
-    findings.extend(_scan_cicd_security(root))
-    findings.extend(_scan_dependencies(root))
+    # Compliance framework-specific scans (using improved detection techniques)
+    findings.extend(_scan_dpdp_compliance(root))
+    findings.extend(_scan_gdpr_compliance(root))
     
     # DPDP and GDPR compliance checks
     findings.extend(_scan_dpdp_compliance(root))
@@ -408,70 +418,29 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
 def _scan_dpdp_compliance(root: Path) -> list[RawFinding]:
     """Scan for DPDP Act (India) compliance control violations.
     
-    Detects:
-    - Missing data retention configuration
-    - Missing consent handling indicators
-    - Missing access logging for personal data paths
+    Uses improved detection techniques:
+    - Dependency analysis (Supabase, Auth0, etc.)
+    - API route analysis
+    - AST function call analysis
+    - Database schema analysis
+    - Configuration file parsing
     """
     findings: list[RawFinding] = []
     
-    # Check for retention configuration
-    retention_found = False
-    consent_found = False
-    access_logging_found = False
+    # Improved detection: Use multiple techniques
+    consent_found = (
+        detect_consent_via_dependencies(root) or
+        detect_consent_via_api_routes(root) or
+        detect_consent_via_ast(root) or
+        detect_consent_via_database_schema(root)
+    )
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
-            continue
-        
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
-            file_rel = _relative_path(file_path, root)
-            
-            # DPDP Section 8: Data retention
-            if not retention_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "retention",
-                        "data_retention",
-                        "retention_policy",
-                        "retention_period",
-                    ]
-                ):
-                    retention_found = True
-            
-            # DPDP Section 7: Consent handling
-            if not consent_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "consent",
-                        "user_consent",
-                        "consent_handler",
-                        "consent_management",
-                        "gdpr_consent",
-                        "dpdp_consent",
-                    ]
-                ):
-                    consent_found = True
-            
-            # DPDP Section 9: Access logging
-            if not access_logging_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "access_log",
-                        "audit_log",
-                        "log_access",
-                        "access_audit",
-                        "personal_data_log",
-                    ]
-                ):
-                    access_logging_found = True
-                    
-        except (OSError, UnicodeDecodeError):
-            continue
+    retention_found = detect_retention_via_config(root)
+    
+    access_logging_found = (
+        detect_access_logging_via_ast(root) or
+        detect_access_logging_via_config(root)
+    )
     
     # Generate findings for missing evidence
     if not retention_found:
@@ -508,10 +477,10 @@ def _scan_dpdp_compliance(root: Path) -> list[RawFinding]:
                 line=None,
                 snippet="No access logging for personal data found",
                 severity="high",
-                    confidence=0.7,
-                    metadata={"evidence_type": "log_proof"},
-                )
+                confidence=0.7,
+                metadata={"evidence_type": "log_proof"},
             )
+        )
     
     return findings
 
@@ -519,105 +488,42 @@ def _scan_dpdp_compliance(root: Path) -> list[RawFinding]:
 def _scan_gdpr_compliance(root: Path) -> list[RawFinding]:
     """Scan for GDPR (EU) compliance control violations.
     
-    Detects:
-    - Missing encryption configuration
-    - Missing consent handling indicators
-    - Missing data retention policies
-    - Missing right to erasure mechanisms
-    - Missing data portability mechanisms
+    Uses improved detection techniques:
+    - Dependency analysis (encryption libraries)
+    - API route analysis (data export, erasure endpoints)
+    - AST function call analysis
+    - Configuration file parsing
     """
     findings: list[RawFinding] = []
     
-    # Check for GDPR compliance indicators
-    encryption_found = False
-    consent_found = False
-    retention_found = False
-    erasure_found = False
-    portability_found = False
+    # Improved detection: Use multiple techniques
+    encryption_found = (
+        detect_encryption_via_dependencies(root) or
+        detect_encryption_via_config(root)
+    )
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
-            continue
-        
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
-            
-            # GDPR Article 32: Encryption
-            if not encryption_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "encrypt",
-                        "encryption",
-                        "tls",
-                        "ssl",
-                        "aes",
-                        "cipher",
-                        "crypto",
-                    ]
-                ):
-                    encryption_found = True
-            
-            # GDPR Article 6: Consent (shared with DPDP)
-            if not consent_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "consent",
-                        "user_consent",
-                        "consent_handler",
-                        "consent_management",
-                        "gdpr_consent",
-                        "data_subject_consent",
-                    ]
-                ):
-                    consent_found = True
-            
-            # GDPR Article 5: Retention (shared with DPDP)
-            if not retention_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "retention",
-                        "data_retention",
-                        "retention_policy",
-                        "retention_period",
-                        "data_retention_policy",
-                    ]
-                ):
-                    retention_found = True
-            
-            # GDPR Article 17: Right to erasure
-            if not erasure_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "erase",
-                        "erasure",
-                        "delete_user_data",
-                        "right_to_be_forgotten",
-                        "gdpr_delete",
-                        "remove_personal_data",
-                    ]
-                ):
-                    erasure_found = True
-            
-            # GDPR Article 20: Data portability
-            if not portability_found:
-                if any(
-                    keyword in content
-                    for keyword in [
-                        "data_portability",
-                        "export_data",
-                        "export_user_data",
-                        "gdpr_export",
-                        "download_my_data",
-                    ]
-                ):
-                    portability_found = True
-                    
-        except (OSError, UnicodeDecodeError):
-            continue
+    # Consent is shared with DPDP, already checked there
+    consent_found = (
+        detect_consent_via_dependencies(root) or
+        detect_consent_via_api_routes(root) or
+        detect_consent_via_ast(root) or
+        detect_consent_via_database_schema(root)
+    )
+    
+    # Retention is shared with DPDP, already checked there
+    retention_found = detect_retention_via_config(root)
+    
+    # GDPR-specific: Right to erasure
+    erasure_found = (
+        detect_right_to_erasure_via_api_routes(root) or
+        detect_right_to_erasure_via_ast(root)
+    )
+    
+    # GDPR-specific: Data portability
+    portability_found = (
+        detect_data_portability_via_api_routes(root) or
+        detect_data_portability_via_ast(root)
+    )
     
     # Generate findings for missing evidence (only for GDPR-specific controls)
     if not encryption_found:

@@ -121,14 +121,17 @@ export function ControlsEvidencePage() {
     );
   }
 
+  // All supported frameworks (always show all 7)
+  const ALL_FRAMEWORKS = ["SOC2", "ISO27001", "GDPR", "DPDP", "HIPAA", "PCI-DSS", "NIST-CSF"];
+  
   // Group findings by control_id
   const controlsMap = new Map<string, ControlDetail>();
-  const frameworks = new Set<string>();
+  const frameworks = new Set<string>(ALL_FRAMEWORKS); // Initialize with all frameworks
 
   report.findings.forEach((finding) => {
     const controlId = finding.control_id || "UNKNOWN";
     const framework = finding.compliance_frameworks_affected?.[0] || "UNKNOWN";
-    frameworks.add(framework);
+    frameworks.add(framework); // Add any additional frameworks found
 
     const key = `${controlId}-${framework}`;
     if (!controlsMap.has(key)) {
@@ -173,8 +176,16 @@ export function ControlsEvidencePage() {
       ? controls
       : controls.filter((c) => c.framework === selectedFramework);
 
-  // Group by framework for left panel
+  // Group by framework for left panel - ensure all frameworks are shown
   const controlsByFramework = new Map<string, ControlDetail[]>();
+  
+  // Initialize all frameworks (even if no controls)
+  if (selectedFramework === "all") {
+    ALL_FRAMEWORKS.forEach((fw) => {
+      controlsByFramework.set(fw, []);
+    });
+  }
+  
   filteredControls.forEach((control) => {
     if (!controlsByFramework.has(control.framework)) {
       controlsByFramework.set(control.framework, []);
@@ -215,9 +226,9 @@ export function ControlsEvidencePage() {
         className="max-w-5xl mx-auto px-4"
       >
         <Tabs value={selectedFramework} onValueChange={setSelectedFramework}>
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="all">All Frameworks</TabsTrigger>
-            {Array.from(frameworks).map((fw) => (
+            {ALL_FRAMEWORKS.map((fw) => (
               <TabsTrigger key={fw} value={fw}>
                 {fw}
               </TabsTrigger>
@@ -242,12 +253,23 @@ export function ControlsEvidencePage() {
               <CardDescription>{filteredControls.length} control{filteredControls.length !== 1 ? "s" : ""}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto">
-              {Array.from(controlsByFramework.entries()).map(([framework, frameworkControls]) => (
+              {Array.from(controlsByFramework.entries())
+                .sort(([a], [b]) => {
+                  // Sort frameworks in the order of ALL_FRAMEWORKS
+                  const indexA = ALL_FRAMEWORKS.indexOf(a);
+                  const indexB = ALL_FRAMEWORKS.indexOf(b);
+                  if (indexA === -1 && indexB === -1) return 0;
+                  if (indexA === -1) return 1;
+                  if (indexB === -1) return -1;
+                  return indexA - indexB;
+                })
+                .map(([framework, frameworkControls]) => (
                 <div key={framework} className="space-y-2">
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                    {framework}
+                    {framework} {frameworkControls.length > 0 && `(${frameworkControls.length})`}
                   </h3>
-                  {frameworkControls.map((control) => {
+                  {frameworkControls.length > 0 ? (
+                    frameworkControls.map((control) => {
                     const config = stateConfig[control.state];
                     const Icon = config.icon;
                     const isSelected = selectedControl?.control_id === control.control_id &&
@@ -279,7 +301,11 @@ export function ControlsEvidencePage() {
                         </div>
                       </button>
                     );
-                  })}
+                  })) : (
+                    <div className="text-xs text-muted-foreground/50 italic p-2">
+                      No controls found
+                    </div>
+                  )}
                 </div>
               ))}
             </CardContent>
