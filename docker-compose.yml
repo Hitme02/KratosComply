@@ -7,9 +7,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=sqlite:///./kratos.db
+      - DATABASE_URL=sqlite:////app/data/kratos.db
     volumes:
-      - ./kratos.db:/app/kratos.db
+      - ./kratos.db:/app/data
       - ./backend:/app
     restart: unless-stopped
     healthcheck:

@@ -46,14 +46,44 @@ export function AuditCockpitPage() {
     ? new Set(report.findings.flatMap((f) => f.compliance_frameworks_affected || []))
     : new Set<string>();
 
-  // Calculate control states
+  // Calculate control states from report data
+  const controlStatesMap = report?.control_states || {};
+  const systemEvidence = report?.system_evidence || [];
+  
+  // Count control states
   const controlStates = {
-    verified_machine: report?.findings.filter((f) => f.control_pass_fail_status === "PASS").length || 0,
-    verified_system: 0, // Would come from system evidence
-    attested_human: 0, // Would come from human attestations
-    missing_evidence: report?.findings.filter((f) => f.control_pass_fail_status === "FAIL").length || 0,
-    expired_evidence: 0, // Would come from expiry checks
+    verified_machine: 0,
+    verified_system: 0,
+    attested_human: 0,
+    missing_evidence: 0,
+    expired_evidence: 0,
   };
+
+  // Count from control_states mapping
+  Object.values(controlStatesMap).forEach((state: string) => {
+    if (state === "VERIFIED_MACHINE") controlStates.verified_machine++;
+    else if (state === "VERIFIED_SYSTEM") controlStates.verified_system++;
+    else if (state === "ATTESTED_HUMAN") controlStates.attested_human++;
+    else if (state === "MISSING_EVIDENCE") controlStates.missing_evidence++;
+    else if (state === "EXPIRED_EVIDENCE") controlStates.expired_evidence++;
+  });
+
+  // Also count from system evidence
+  systemEvidence.forEach((ev: any) => {
+    if (ev.evidence_present && !ev.expiry_detected) {
+      controlStates.verified_system++;
+    } else if (ev.expiry_detected) {
+      controlStates.expired_evidence++;
+    } else {
+      controlStates.missing_evidence++;
+    }
+  });
+
+  // Fallback: if no control_states, use findings as before
+  if (Object.keys(controlStatesMap).length === 0 && systemEvidence.length === 0) {
+    controlStates.verified_machine = report?.findings.filter((f) => f.control_pass_fail_status === "PASS").length || 0;
+    controlStates.missing_evidence = report?.findings.filter((f) => f.control_pass_fail_status === "FAIL").length || 0;
+  }
 
   const totalControls = Object.values(controlStates).reduce((a, b) => a + b, 0);
   const satisfiedControls = controlStates.verified_machine + controlStates.verified_system + controlStates.attested_human;

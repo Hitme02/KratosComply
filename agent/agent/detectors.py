@@ -18,6 +18,7 @@ from .config import (
     PUBLIC_ACL_MARKER,
     SECRET_KEYWORDS,
     SECRET_TEXT_EXTENSIONS,
+    CLOUD_SECRET_PATTERNS,
 )
 from .findings import RawFinding
 
@@ -91,6 +92,24 @@ def scan_workspace(root: Path) -> list[RawFinding]:
         else:
             findings.extend(_scan_text_file(file_path, root))
     
+    # Enhanced detection capabilities
+    findings.extend(_scan_cloud_secrets(root))
+    findings.extend(_scan_terraform_security(root))
+    findings.extend(_scan_container_security(root))
+    findings.extend(_scan_api_security(root))
+    findings.extend(_scan_database_security(root))
+    findings.extend(_scan_cicd_security(root))
+    findings.extend(_scan_dependencies(root))
+    
+    # Enhanced detection capabilities
+    findings.extend(_scan_cloud_secrets(root))
+    findings.extend(_scan_terraform_security(root))
+    findings.extend(_scan_container_security(root))
+    findings.extend(_scan_api_security(root))
+    findings.extend(_scan_database_security(root))
+    findings.extend(_scan_cicd_security(root))
+    findings.extend(_scan_dependencies(root))
+    
     # DPDP and GDPR compliance checks
     findings.extend(_scan_dpdp_compliance(root))
     findings.extend(_scan_gdpr_compliance(root))
@@ -117,7 +136,48 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
 
     findings: list[RawFinding] = []
     lines = source.splitlines()
+    
+    # Track context for better detection
+    is_test_file = "test" in path.name.lower() or "spec" in path.name.lower()
+    is_example_file = "example" in path.name.lower() or "sample" in path.name.lower()
+    
     for node in ast.walk(tree):
+        # Detect secrets in environment variable loading (getenv with defaults)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in ("getenv", "environ.get"):
+                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                    default_value = node.args[1].value
+                    if isinstance(default_value, str) and _looks_like_real_secret(default_value):
+                        line_no = getattr(node, "lineno", None)
+                        findings.append(RawFinding(
+                            type="hardcoded_secret",
+                            file=_relative_path(path, root),
+                            line=line_no,
+                            snippet=_extract_snippet(lines, line_no),
+                            severity="high",
+                            confidence=0.95,
+                            metadata={"context": "environment_default", "var_name": node.args[0].value if isinstance(node.args[0], ast.Constant) else "unknown"}
+                        ))
+        
+        # Detect secrets in class attributes (Pydantic, dataclasses)
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign):
+                    if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
+                        var_name = item.target.id if isinstance(item.target, ast.Name) else "unknown"
+                        if _contains_secret_keyword(var_name) and _looks_like_real_secret(item.value.value):
+                            line_no = getattr(item, "lineno", None)
+                            findings.append(RawFinding(
+                                type="hardcoded_secret",
+                                file=_relative_path(path, root),
+                                line=line_no,
+                                snippet=_extract_snippet(lines, line_no),
+                                severity="high",
+                                confidence=0.9,
+                                metadata={"context": "class_attribute", "class_name": node.name, "var_name": var_name}
+                            ))
+        
+        # Standard assignment detection
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = []
             if isinstance(node, ast.Assign):
@@ -150,11 +210,17 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
                 is_real_secret = False
                 confidence = 0.7
                 
+                # Adjust confidence based on context
+                if is_test_file:
+                    confidence -= 0.2
+                if is_example_file:
+                    confidence -= 0.3
+                
                 if literal_value:
                     # Check if the literal value looks like a real secret
                     if _looks_like_real_secret(literal_value):
                         is_real_secret = True
-                        confidence = 0.95
+                        confidence = min(0.95, confidence + 0.25)
                     # Or if it's a reasonably long string (likely not a config constant)
                     elif len(literal_value) >= 8 and not any(
                         fp in var_name.upper() 
@@ -162,7 +228,7 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
                     ):
                         # Variable name suggests secret AND has a substantial value
                         is_real_secret = True
-                        confidence = 0.85
+                        confidence = min(0.85, confidence + 0.15)
                 else:
                     # No literal value - could be assignment from another variable
                     # Check if it's a UI component (Streamlit, etc.) - these are false positives
@@ -182,7 +248,7 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
                         if not any(fp in var_name.upper() for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "_FILENAME", "_PATH")):
                             # This might be a secret, but lower confidence
                             is_real_secret = True
-                            confidence = 0.6
+                            confidence = max(0.5, confidence - 0.1)
                 
                 if is_real_secret:
                     line_no = getattr(node, "lineno", None)
@@ -194,10 +260,12 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
                             line=line_no,
                             snippet=snippet,
                             severity="high",
-                            confidence=confidence,
+                            confidence=max(0.0, min(1.0, confidence)),
                             metadata={
                                 "var_name": var_name,
                                 "literal": literal_value,
+                                "is_test_file": is_test_file,
+                                "is_example_file": is_example_file,
                             },
                         )
                     )
@@ -593,6 +661,407 @@ def _scan_gdpr_compliance(root: Path) -> list[RawFinding]:
     
     # Note: Consent and retention are already checked in DPDP scan
     # to avoid duplicate findings, but they apply to both frameworks
+    
+    return findings
+
+
+def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
+    """Detect cloud provider-specific secrets."""
+    findings: list[RawFinding] = []
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        for provider, patterns in CLOUD_SECRET_PATTERNS.items():
+            for pattern, secret_type in patterns:
+                matches = re.finditer(pattern, content, re.IGNORECASE)
+                for match in matches:
+                    line_no = content[:match.start()].count("\n") + 1
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=match.group(0)[:100],
+                        severity="critical" if provider in ("aws", "azure") else "high",
+                        confidence=0.98,
+                        metadata={
+                            "provider": provider,
+                            "secret_type": secret_type,
+                            "context": "cloud_credential"
+                        },
+                    ))
+    
+    return findings
+
+
+def _scan_terraform_security(root: Path) -> list[RawFinding]:
+    """Enhanced Terraform/Infrastructure-as-Code security scanning."""
+    findings: list[RawFinding] = []
+    
+    terraform_files = [f for f in _iter_files(root) if f.suffix in (".tf", ".tf.json")]
+    
+    for tf_file in terraform_files:
+        if _should_skip(tf_file):
+            continue
+        
+        try:
+            content = tf_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect public S3 buckets
+        s3_public_pattern = r'resource\s+"aws_s3_bucket"[^}]+(?:public_access_block|acl\s*=\s*["\']public)'
+        if re.search(s3_public_pattern, content, re.IGNORECASE | re.DOTALL):
+            findings.append(RawFinding(
+                type="insecure_acl",
+                file=_relative_path(tf_file, root),
+                line=None,
+                snippet="Public S3 bucket detected",
+                severity="high",
+                confidence=0.9,
+                metadata={"resource_type": "s3_bucket", "control_id": "SOC2-CC6.1"}
+            ))
+        
+        # Detect unencrypted RDS instances
+        rds_pattern = r'resource\s+"aws_db_instance"[^}]+storage_encrypted\s*=\s*false'
+        if re.search(rds_pattern, content, re.IGNORECASE | re.DOTALL):
+            findings.append(RawFinding(
+                type="unencrypted_database",
+                file=_relative_path(tf_file, root),
+                line=None,
+                snippet="RDS instance without encryption",
+                severity="high",
+                confidence=0.85,
+                metadata={"resource_type": "rds_instance", "control_id": "SOC2-CC6.1"}
+            ))
+        
+        # Detect security groups allowing 0.0.0.0/0
+        sg_public = r'cidr_blocks\s*=\s*\[["\']0\.0\.0\.0/0["\']'
+        if re.search(sg_public, content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="insecure_network_acl",
+                file=_relative_path(tf_file, root),
+                line=None,
+                snippet="Security group allows public access (0.0.0.0/0)",
+                severity="critical",
+                confidence=0.95,
+                metadata={"resource_type": "security_group", "control_id": "SOC2-CC6.1"}
+            ))
+    
+    return findings
+
+
+def _scan_container_security(root: Path) -> list[RawFinding]:
+    """Detect container security compliance issues."""
+    findings: list[RawFinding] = []
+    
+    # Scan Dockerfiles
+    for dockerfile in root.rglob("Dockerfile*"):
+        if _should_skip(dockerfile):
+            continue
+        
+        try:
+            content = dockerfile.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect running as root
+        if re.search(r'USER\s+root', content, re.IGNORECASE) or not re.search(r'USER\s+', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="container_runs_as_root",
+                file=_relative_path(dockerfile, root),
+                line=None,
+                snippet="Container runs as root user",
+                severity="medium",
+                confidence=0.9,
+                metadata={"control_id": "SOC2-CC6.1", "container_type": "docker"}
+            ))
+        
+        # Detect secrets in Dockerfile
+        secret_pattern = r'(?:ENV|ARG)\s+(?:PASSWORD|SECRET|API_KEY|TOKEN)\s*=\s*["\']([^"\']+)["\']'
+        matches = re.finditer(secret_pattern, content, re.IGNORECASE)
+        for match in matches:
+            line_no = content[:match.start()].count("\n") + 1
+            findings.append(RawFinding(
+                type="hardcoded_secret",
+                file=_relative_path(dockerfile, root),
+                line=line_no,
+                snippet=match.group(0),
+                severity="high",
+                confidence=0.95,
+                metadata={"context": "dockerfile", "control_id": "SOC2-CC6.2"}
+            ))
+    
+    # Scan Kubernetes manifests
+    for k8s_file in list(root.rglob("*.yaml")) + list(root.rglob("*.yml")):
+        if _should_skip(k8s_file):
+            continue
+        
+        if "k8s" not in str(k8s_file) and "kubernetes" not in str(k8s_file):
+            continue
+        
+        try:
+            content = k8s_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect secrets in plain text
+        if re.search(r'password:\s*["\']([^"\']+)["\']', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="hardcoded_secret",
+                file=_relative_path(k8s_file, root),
+                line=None,
+                snippet="Secret in plain text in Kubernetes manifest",
+                severity="high",
+                confidence=0.9,
+                metadata={"context": "kubernetes", "control_id": "SOC2-CC6.2"}
+            ))
+        
+        # Detect missing security contexts
+        if "kind: Deployment" in content or "kind: Pod" in content:
+            if "securityContext" not in content:
+                findings.append(RawFinding(
+                    type="missing_security_context",
+                    file=_relative_path(k8s_file, root),
+                    line=None,
+                    snippet="Missing securityContext in Kubernetes manifest",
+                    severity="medium",
+                    confidence=0.8,
+                    metadata={"control_id": "SOC2-CC6.1"}
+                ))
+    
+    return findings
+
+
+def _scan_api_security(root: Path) -> list[RawFinding]:
+    """Detect API security compliance issues."""
+    findings: list[RawFinding] = []
+    
+    api_files = list(root.rglob("*.py")) + list(root.rglob("*.js")) + list(root.rglob("*.ts"))
+    
+    for file_path in api_files:
+        if _should_skip(file_path):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect Flask/FastAPI routes without authentication
+        if "flask" in content.lower() or "fastapi" in content.lower():
+            route_pattern = r'@(?:app|router)\.(?:route|get|post|put|delete)\(["\']([^"\']+)["\']'
+            auth_pattern = r'@(?:require_auth|authenticated|login_required|auth_required)'
+            
+            routes = re.finditer(route_pattern, content)
+            for route in routes:
+                route_line = content[:route.start()].count("\n") + 1
+                before_route = content[:route.start()]
+                if not re.search(auth_pattern, before_route[-500:]):
+                    findings.append(RawFinding(
+                        type="unauthenticated_api_endpoint",
+                        file=_relative_path(file_path, root),
+                        line=route_line,
+                        snippet=route.group(0),
+                        severity="high",
+                        confidence=0.7,
+                        metadata={"endpoint": route.group(1), "control_id": "SOC2-CC6.1"}
+                    ))
+        
+        # Detect API keys in URL parameters
+        api_key_in_url = r'(?:api_key|apikey|token|access_token)\s*=\s*["\']([^"\']+)["\']'
+        if re.search(api_key_in_url, content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="api_key_in_url",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="API key detected in URL parameter",
+                severity="high",
+                confidence=0.8,
+                metadata={"control_id": "SOC2-CC6.2"}
+            ))
+    
+    return findings
+
+
+def _scan_database_security(root: Path) -> list[RawFinding]:
+    """Detect database security compliance issues."""
+    findings: list[RawFinding] = []
+    
+    sql_files = list(root.rglob("*.sql")) + list(root.rglob("*.py"))
+    
+    for file_path in sql_files:
+        if _should_skip(file_path):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect string concatenation in SQL queries (potential SQL injection)
+        sql_concat_patterns = [
+            r'["\'].*SELECT.*["\']\s*\+\s*[a-zA-Z_]+',
+            r'f["\'].*SELECT.*{.*}.*["\']',
+            r'["\'].*SELECT.*["\']\.format\(',
+        ]
+        
+        for pattern in sql_concat_patterns:
+            matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
+            for match in matches:
+                line_no = content[:match.start()].count("\n") + 1
+                findings.append(RawFinding(
+                    type="potential_sql_injection",
+                    file=_relative_path(file_path, root),
+                    line=line_no,
+                    snippet=match.group(0)[:100],
+                    severity="high",
+                    confidence=0.75,
+                    metadata={"control_id": "SOC2-CC6.1", "vulnerability_type": "sql_injection"}
+                ))
+        
+        # Detect database connections without SSL/TLS
+        db_conn_patterns = [
+            r'postgresql://[^:]+:[^@]+@[^/]+/[^\s"\']+',
+            r'mysql://[^:]+:[^@]+@[^/]+/[^\s"\']+',
+        ]
+        
+        for pattern in db_conn_patterns:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                conn_string = match.group(0)
+                if "ssl" not in conn_string.lower() and "tls" not in conn_string.lower():
+                    line_no = content[:match.start()].count("\n") + 1
+                    findings.append(RawFinding(
+                        type="unencrypted_database_connection",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=conn_string,
+                        severity="high",
+                        confidence=0.9,
+                        metadata={"control_id": "ISO27001-A.10.1.1", "connection_type": "database"}
+                    ))
+    
+    return findings
+
+
+def _scan_cicd_security(root: Path) -> list[RawFinding]:
+    """Detect CI/CD pipeline security issues."""
+    findings: list[RawFinding] = []
+    
+    ci_files = list(root.rglob(".github/workflows/*.yml")) + \
+               list(root.rglob(".gitlab-ci.yml")) + \
+               list(root.rglob(".circleci/config.yml")) + \
+               list(root.rglob("Jenkinsfile"))
+    
+    for ci_file in ci_files:
+        if _should_skip(ci_file):
+            continue
+        
+        try:
+            content = ci_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Detect secrets in CI/CD files
+        secret_patterns = [
+            r'password:\s*["\']([^"\']+)["\']',
+            r'api_key:\s*["\']([^"\']+)["\']',
+            r'secret:\s*["\']([^"\']+)["\']',
+        ]
+        
+        for pattern in secret_patterns:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                line_no = content[:match.start()].count("\n") + 1
+                findings.append(RawFinding(
+                    type="hardcoded_secret",
+                    file=_relative_path(ci_file, root),
+                    line=line_no,
+                    snippet=match.group(0),
+                    severity="critical",
+                    confidence=0.95,
+                    metadata={"context": "cicd", "control_id": "SOC2-CC6.2"}
+                ))
+        
+        # Detect missing artifact signing
+        if "docker build" in content.lower() or "docker push" in content.lower():
+            if "cosign" not in content.lower() and "notary" not in content.lower():
+                findings.append(RawFinding(
+                    type="unsigned_artifacts",
+                    file=_relative_path(ci_file, root),
+                    line=None,
+                    snippet="Docker images not signed in CI/CD pipeline",
+                    severity="medium",
+                    confidence=0.7,
+                    metadata={"control_id": "SOC2-CC6.1"}
+                ))
+    
+    return findings
+
+
+def _scan_dependencies(root: Path) -> list[RawFinding]:
+    """Scan dependencies for compliance issues."""
+    findings: list[RawFinding] = []
+    
+    import json
+    
+    # Check for dependency lock files
+    lock_files = {
+        "package-lock.json": "npm",
+        "yarn.lock": "yarn",
+        "requirements.txt": "pip",
+        "Pipfile.lock": "pipenv",
+        "poetry.lock": "poetry",
+        "Gemfile.lock": "ruby",
+        "go.sum": "go",
+    }
+    
+    for lock_file_name, package_manager in lock_files.items():
+        lock_file = root / lock_file_name
+        if not lock_file.exists():
+            findings.append(RawFinding(
+                type="missing_dependency_lock",
+                file=lock_file_name,
+                line=None,
+                snippet=f"Missing {lock_file_name} - dependencies not locked",
+                severity="medium",
+                confidence=0.9,
+                metadata={
+                    "package_manager": package_manager,
+                    "control_id": "SOC2-CC6.1",
+                }
+            ))
+    
+    # Check for outdated dependencies (compliance risk)
+    package_json = root / "package.json"
+    if package_json.exists():
+        try:
+            package_data = json.loads(package_json.read_text())
+            dependencies = package_data.get("dependencies", {})
+            
+            for dep, version in dependencies.items():
+                if version.startswith("^") or version.startswith("~") or version == "latest":
+                    findings.append(RawFinding(
+                        type="unpinned_dependency",
+                        file="package.json",
+                        line=None,
+                        snippet=f"{dep}: {version}",
+                        severity="low",
+                        confidence=0.8,
+                        metadata={
+                            "dependency": dep,
+                            "control_id": "SOC2-CC6.1",
+                        }
+                    ))
+        except Exception:
+            pass
     
     return findings
 

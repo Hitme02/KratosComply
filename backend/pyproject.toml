@@ -4,14 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = []
-
-[tool.setuptools.py-modules]
-main = "main"
-database = "database"
-schemas = "schemas"
-github_service = "github_service"
-models = "models"
-security = "security"
+py-modules = ["main", "database", "schemas", "github_service", "models", "security"]
 
 [project]
 name = "kratos-backend"

@@ -17,7 +17,7 @@
  * 
  * Never auto-advance controls.
  */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
@@ -30,14 +30,18 @@ import {
   Eye,
   ArrowLeft,
   AlertCircle,
+  Copy,
+  Check,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
 import { useReportStore } from "@/hooks/useReportStore";
 import { cn } from "@/lib/utils";
+import { api } from "@/services/api";
 
 type ControlState = "VERIFIED_MACHINE" | "VERIFIED_SYSTEM" | "ATTESTED_HUMAN" | "MISSING_EVIDENCE" | "EXPIRED_EVIDENCE";
 type VerificationMethod = "machine" | "system" | "human_attestation";
@@ -89,6 +93,13 @@ export function ControlsEvidencePage() {
   const navigate = useNavigate();
   const [selectedControl, setSelectedControl] = useState<ControlDetail | null>(null);
   const [selectedFramework, setSelectedFramework] = useState<string>("all");
+  const [showHashDialog, setShowHashDialog] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!report) {
     return (
@@ -438,19 +449,38 @@ export function ControlsEvidencePage() {
               {selectedControl && (
                 <>
                   {selectedControl.verification_method === "human_attestation" && (
-                    <Button className="w-full" variant="default">
+                    <Button 
+                      className="w-full" 
+                      variant="default"
+                      onClick={() => {
+                        // TODO: Implement human attestation flow
+                        alert("Human attestation flow coming soon. This will allow you to sign attestations for procedural controls.");
+                      }}
+                    >
                       <FileText className="mr-2 h-4 w-4" />
                       Sign Human Attestation
                     </Button>
                   )}
                   {selectedControl.verification_method !== "human_attestation" && (
-                    <Button className="w-full" variant="outline">
+                    <Button 
+                      className="w-full" 
+                      variant="outline"
+                      onClick={() => {
+                        setShowUploadDialog(true);
+                        setUploadError(null);
+                        setUploadSuccess(false);
+                      }}
+                    >
                       <Upload className="mr-2 h-4 w-4" />
                       Upload Evidence
                     </Button>
                   )}
                   {selectedControl.evidence_hash && (
-                    <Button className="w-full" variant="outline">
+                    <Button 
+                      className="w-full" 
+                      variant="outline"
+                      onClick={() => setShowHashDialog(true)}
+                    >
                       <Eye className="mr-2 h-4 w-4" />
                       View Hashed Proof
                     </Button>
@@ -478,6 +508,197 @@ export function ControlsEvidencePage() {
         </motion.div>
         </div>
       </div>
+
+      {/* Evidence Hash Dialog */}
+      <Dialog open={showHashDialog} onOpenChange={setShowHashDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogClose onClose={() => setShowHashDialog(false)} />
+          <DialogHeader>
+            <DialogTitle>Evidence Hash Proof</DialogTitle>
+            <DialogDescription>
+              Cryptographic hash of the evidence for control {selectedControl?.control_id}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedControl?.evidence_hash && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold">SHA256 Hash:</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(selectedControl.evidence_hash!);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      } catch (err) {
+                        console.error("Failed to copy:", err);
+                      }
+                    }}
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-2 h-4 w-4" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <code className="text-xs break-all block font-mono bg-background/50 p-3 rounded">
+                  {selectedControl.evidence_hash}
+                </code>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                <p className="mb-2">
+                  <strong>Control ID:</strong> {selectedControl.control_id}
+                </p>
+                <p className="mb-2">
+                  <strong>Framework:</strong> {selectedControl.framework}
+                </p>
+                <p>
+                  This hash cryptographically binds the evidence to this control. 
+                  It can be verified against the Merkle root in the compliance report.
+                </p>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload Evidence Dialog */}
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogClose onClose={() => {
+            setShowUploadDialog(false);
+            setUploadError(null);
+            setUploadSuccess(false);
+          }} />
+          <DialogHeader>
+            <DialogTitle>Upload Evidence</DialogTitle>
+            <DialogDescription>
+              Upload evidence file for control {selectedControl?.control_id} ({selectedControl?.framework})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.json"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file || !selectedControl) return;
+
+                setUploading(true);
+                setUploadError(null);
+                setUploadSuccess(false);
+
+                try {
+                  // Convert file to base64
+                  const reader = new FileReader();
+                  reader.onload = async (event) => {
+                    try {
+                      let base64: string;
+                      const result = event.target?.result;
+                      
+                      if (typeof result === 'string') {
+                        // If it's a data URL, extract base64 part
+                        if (result.startsWith('data:')) {
+                          base64 = result.split(',')[1];
+                        } else {
+                          // If it's plain text, convert to base64
+                          base64 = btoa(result);
+                        }
+                      } else if (result instanceof ArrayBuffer) {
+                        // Convert ArrayBuffer to base64
+                        const bytes = new Uint8Array(result);
+                        const binary = bytes.reduce((acc, byte) => acc + String.fromCharCode(byte), '');
+                        base64 = btoa(binary);
+                      } else {
+                        throw new Error("Unable to read file");
+                      }
+                      
+                      // Determine file type
+                      let fileType: "policy" | "sop" | "screenshot" | "log_export" | "declaration" = "policy";
+                      if (file.type.includes('pdf')) {
+                        fileType = "policy";
+                      } else if (file.type.includes('image')) {
+                        fileType = "screenshot";
+                      } else if (file.name.endsWith('.json')) {
+                        fileType = "log_export";
+                      } else if (file.name.toLowerCase().includes('sop') || file.name.toLowerCase().includes('procedure')) {
+                        fileType = "sop";
+                      }
+                      
+                      // Call upload API
+                      await api.uploadEvidence({
+                        file_name: file.name,
+                        file_type: fileType,
+                        content_base64: base64,
+                        metadata: {
+                          control_id: selectedControl.control_id,
+                          framework: selectedControl.framework,
+                          description: `Evidence for ${selectedControl.control_id}`,
+                        },
+                      });
+
+                      setUploadSuccess(true);
+                      setTimeout(() => {
+                        setShowUploadDialog(false);
+                        setUploadSuccess(false);
+                      }, 2000);
+                    } catch (err: any) {
+                      setUploadError(err.response?.data?.detail || err.message || "Upload failed");
+                    } finally {
+                      setUploading(false);
+                    }
+                  };
+                  
+                  // Read file as data URL for all file types (handles binary files correctly)
+                  reader.readAsDataURL(file);
+                } catch (err: any) {
+                  setUploadError(err.message || "Failed to process file");
+                  setUploading(false);
+                }
+              }}
+            />
+            
+            <div className="space-y-2">
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {uploading ? "Uploading..." : "Choose File"}
+              </Button>
+              
+              {uploadError && (
+                <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-3">
+                  <p className="text-sm text-red-400">{uploadError}</p>
+                </div>
+              )}
+              
+              {uploadSuccess && (
+                <div className="rounded-lg border border-green-500/50 bg-green-500/10 p-3">
+                  <p className="text-sm text-green-400">Evidence uploaded successfully!</p>
+                </div>
+              )}
+              
+              <p className="text-xs text-muted-foreground">
+                Supported formats: PDF, Markdown, Text, Images (PNG, JPG), JSON
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

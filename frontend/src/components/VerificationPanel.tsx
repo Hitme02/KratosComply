@@ -104,7 +104,39 @@ export function VerificationPanel() {
                 className="border-emerald-500/40 bg-emerald-500/10"
               />
             ) : (
-              <Alert type="error" title="Verification failed" description={verification.message} />
+              <motion.div
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                className="space-y-3"
+              >
+                <Alert 
+                  type="error" 
+                  title="Report Integrity Compromised" 
+                  description={
+                    verification.message === "Signature verification failed"
+                      ? "The report's cryptographic signature does not match. This report may have been tampered with or modified after generation."
+                      : verification.message === "Merkle root mismatch"
+                      ? "The Merkle root integrity check failed. Evidence hashes in this report do not match the expected values. The report may have been altered."
+                      : verification.message === "agent_signature missing"
+                      ? "The report is missing its cryptographic signature. This report cannot be verified and should not be trusted for compliance purposes."
+                      : verification.message || "The report failed verification. It may have been tampered with or corrupted."
+                  }
+                  className="border-red-500/50 bg-red-500/10"
+                />
+                <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldAlert className="h-5 w-5 text-red-400 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-red-300">Security Warning</p>
+                      <p className="text-sm text-red-200/80">
+                        This report cannot be used for compliance attestation. Do not proceed with creating an attestation 
+                        until the report integrity is restored. If you believe this is an error, ensure you are using the 
+                        correct public key that matches the signing key used to generate the report.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
             )}
             <div className="grid gap-3 md:grid-cols-2">
               <StatusCard

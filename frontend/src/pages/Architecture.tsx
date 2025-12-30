@@ -67,11 +67,13 @@ export function ArchitecturePage() {
                 signatures. Only this report (not your source code) is uploaded to the verification 
                 backend. The report contains:
               </p>
-              <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
+                  <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
                 <li>Control violation findings (file paths, line numbers, snippets)</li>
                 <li>Evidence hashes (SHA256 hashes of evidence, not the evidence itself)</li>
                 <li>Merkle root (cryptographic proof of report integrity)</li>
                 <li>Ed25519 signature (cryptographic proof of authenticity)</li>
+                <li>System evidence (configuration flags, cloud provider settings)</li>
+                <li>Control states (VERIFIED_MACHINE, VERIFIED_SYSTEM, MISSING_EVIDENCE, etc.)</li>
               </ul>
             </div>
 
@@ -133,10 +135,15 @@ export function ArchitecturePage() {
                 <strong>Examples:</strong>
               </p>
               <ul className="list-disc list-inside text-sm text-muted-foreground ml-2 space-y-1">
-                <li>Hardcoded secrets in code</li>
-                <li>Insecure ACLs in infrastructure code</li>
+                <li>Hardcoded secrets (including cloud provider credentials)</li>
+                <li>Insecure ACLs in infrastructure code (Terraform, CloudFormation)</li>
+                <li>Container security issues (Docker, Kubernetes)</li>
+                <li>API authentication gaps</li>
+                <li>SQL injection risks</li>
+                <li>Unencrypted database connections</li>
+                <li>CI/CD pipeline secrets</li>
                 <li>Consent handling mechanisms</li>
-                <li>Data erasure functionality</li>
+                <li>Data erasure and portability functionality</li>
               </ul>
               <p className="text-sm text-muted-foreground mt-3">
                 <strong>State:</strong> VERIFIED_MACHINE (when evidence present)
@@ -168,6 +175,9 @@ export function ArchitecturePage() {
                 <li>Retention duration settings</li>
                 <li>Encryption-at-rest configuration</li>
                 <li>MFA enforcement settings</li>
+                <li>AWS CloudTrail, S3 encryption, IAM MFA</li>
+                <li>Cloud provider security configurations</li>
+                <li>Dependency lock file presence</li>
               </ul>
               <p className="text-sm text-muted-foreground mt-3">
                 <strong>State:</strong> VERIFIED_SYSTEM (when evidence present)
@@ -293,7 +303,7 @@ export function ArchitecturePage() {
                     This attestation includes:
                   </p>
                   <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-4 mt-2">
-                    <li>Framework coverage (SOC2, ISO27001, GDPR, DPDP)</li>
+                    <li>Framework coverage (SOC2, ISO27001, GDPR, DPDP, HIPAA, PCI-DSS, NIST CSF)</li>
                     <li>Control states (VERIFIED_MACHINE, VERIFIED_SYSTEM, ATTESTED_HUMAN, MISSING_EVIDENCE)</li>
                     <li>Evidence hashes (cryptographic binding)</li>
                     <li>Human signer identities (hashed for privacy)</li>

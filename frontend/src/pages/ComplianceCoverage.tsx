@@ -136,6 +136,66 @@ const frameworks = {
       },
     ],
   },
+  HIPAA: {
+    name: "HIPAA",
+    description: "Health Insurance Portability and Accountability Act",
+    controls: [
+      {
+        id: "164.308",
+        category: "Access Control",
+        description: "Access controls for ePHI (electronic Protected Health Information)",
+        verification: "system",
+        example: "Access control configuration for healthcare data",
+      },
+      {
+        id: "164.312",
+        category: "Encryption",
+        description: "Encryption of ePHI in transit and at rest",
+        verification: "machine",
+        example: "Encryption configuration for healthcare data",
+      },
+    ],
+  },
+  "PCI-DSS": {
+    name: "PCI-DSS",
+    description: "Payment Card Industry Data Security Standard",
+    controls: [
+      {
+        id: "3.4",
+        category: "Secrets Management",
+        description: "Render PAN (Primary Account Number) unreadable anywhere it is stored",
+        verification: "machine",
+        example: "Cardholder data encryption or tokenization",
+      },
+      {
+        id: "8.2",
+        category: "Access Control",
+        description: "Strong authentication for all system components",
+        verification: "system",
+        example: "MFA configuration for payment systems",
+      },
+    ],
+  },
+  "NIST-CSF": {
+    name: "NIST Cybersecurity Framework",
+    description: "Framework for improving critical infrastructure cybersecurity",
+    controls: [
+      {
+        id: "PR.AC-1",
+        category: "Access Control",
+        description: "Identities and credentials are issued, managed, verified, revoked, and audited",
+        verification: "system",
+        example: "Identity and access management configuration",
+      },
+      {
+        id: "PR.DS-1",
+        category: "Data Protection",
+        description: "Data-at-rest is protected",
+        verification: "machine",
+        example: "Encryption configuration for data storage",
+      },
+    ],
+  },
 };
 
 export function ComplianceCoveragePage() {
@@ -178,7 +238,9 @@ export function ComplianceCoveragePage() {
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Fully automated verification through AST parsing and regex patterns. 
-                  Examples: hardcoded secrets, insecure ACLs, consent handling code.
+                  Examples: hardcoded secrets, cloud provider credentials, insecure ACLs, SQL injection risks, 
+                  unencrypted database connections, container security issues, API authentication gaps, 
+                  CI/CD pipeline secrets, and consent handling code.
                 </p>
               </div>
               <div className="space-y-2">
@@ -188,7 +250,8 @@ export function ComplianceCoveragePage() {
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Configuration detection (flags, settings). Examples: logging enabled, 
-                  retention duration, encryption settings, MFA configuration.
+                  retention duration, encryption settings, MFA configuration, AWS CloudTrail, 
+                  S3 encryption, IAM policies, and cloud provider security settings.
                 </p>
               </div>
               <div className="space-y-2">
@@ -221,11 +284,14 @@ export function ComplianceCoveragePage() {
         className="max-w-5xl mx-auto px-4"
       >
         <Tabs defaultValue="SOC2" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="SOC2">SOC 2</TabsTrigger>
             <TabsTrigger value="ISO27001">ISO 27001</TabsTrigger>
             <TabsTrigger value="DPDP">DPDP Act</TabsTrigger>
             <TabsTrigger value="GDPR">GDPR</TabsTrigger>
+            <TabsTrigger value="HIPAA">HIPAA</TabsTrigger>
+            <TabsTrigger value="PCI-DSS">PCI-DSS</TabsTrigger>
+            <TabsTrigger value="NIST-CSF">NIST CSF</TabsTrigger>
           </TabsList>
 
           {Object.entries(frameworks).map(([key, framework]) => (

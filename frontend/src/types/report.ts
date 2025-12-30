@@ -38,6 +38,16 @@ export interface Report {
   project: ProjectInfo;
   standards: string[];
   findings: Finding[];
+  system_evidence?: Array<{
+    control_id: string;
+    framework: string;
+    evidence_type: string;
+    evidence_present: boolean;
+    evidence_source: string;
+    expiry_detected: boolean;
+  }>;
+  control_states?: Record<string, string>; // control_id -> ControlState
+  evidence_hashes?: string[];
   metrics: Metrics;
   merkle_root: string;
   agent_signature: string;

@@ -291,7 +291,7 @@ export function AttestationsPage() {
                   <strong>Ed25519 Signature:</strong> Cryptographic proof of authenticity (signed by agent private key)
                 </li>
                 <li>
-                  <strong>Framework Coverage:</strong> Which compliance frameworks are covered (SOC2, ISO27001, GDPR, DPDP)
+                  <strong>Framework Coverage:</strong> Which compliance frameworks are covered (SOC2, ISO27001, GDPR, DPDP, HIPAA, PCI-DSS, NIST CSF)
                 </li>
                 <li>
                   <strong>Control States:</strong> Which controls are VERIFIED_MACHINE, VERIFIED_SYSTEM, ATTESTED_HUMAN, or MISSING_EVIDENCE

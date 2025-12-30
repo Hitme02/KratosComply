@@ -320,6 +320,73 @@ def detect_backup_configuration(workspace: Path) -> list[SystemEvidence]:
     return evidence_list
 
 
+def detect_aws_security_configuration(workspace: Path) -> list[SystemEvidence]:
+    """Detect AWS-specific security configurations."""
+    evidence_list: list[SystemEvidence] = []
+    
+    # AWS CloudTrail logging
+    cloudtrail_patterns = [
+        r'aws_cloudtrail.*logging.*enabled\s*=\s*true',
+        r'enable_logging\s*=\s*true.*cloudtrail',
+    ]
+    
+    # AWS S3 encryption
+    s3_encryption_patterns = [
+        r'server_side_encryption_configuration',
+        r'sse_algorithm\s*=\s*["\']AES256["\']',
+    ]
+    
+    # AWS IAM MFA
+    iam_mfa_patterns = [
+        r'mfa_enabled\s*=\s*true',
+        r'enforce_mfa\s*=\s*true',
+    ]
+    
+    for file_path in workspace.rglob("*.tf"):
+        if any(excluded in str(file_path) for excluded in [".git", "node_modules", "__pycache__", ".venv"]):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        # Check for CloudTrail
+        if any(re.search(p, content, re.IGNORECASE) for p in cloudtrail_patterns):
+            evidence_list.append(SystemEvidence(
+                control_id="CC7.2",
+                framework="SOC2",
+                evidence_type=EvidenceType.CONFIG_PROOF,
+                evidence_present=True,
+                evidence_source=str(file_path.relative_to(workspace)),
+                evidence_data={"provider": "aws", "service": "cloudtrail"}
+            ))
+        
+        # Check for S3 encryption
+        if any(re.search(p, content, re.IGNORECASE) for p in s3_encryption_patterns):
+            evidence_list.append(SystemEvidence(
+                control_id="A.10.1.1",
+                framework="ISO27001",
+                evidence_type=EvidenceType.CONFIG_PROOF,
+                evidence_present=True,
+                evidence_source=str(file_path.relative_to(workspace)),
+                evidence_data={"provider": "aws", "service": "s3", "encryption": "enabled"}
+            ))
+        
+        # Check for IAM MFA
+        if any(re.search(p, content, re.IGNORECASE) for p in iam_mfa_patterns):
+            evidence_list.append(SystemEvidence(
+                control_id="A.9.2.1",
+                framework="ISO27001",
+                evidence_type=EvidenceType.CONFIG_PROOF,
+                evidence_present=True,
+                evidence_source=str(file_path.relative_to(workspace)),
+                evidence_data={"provider": "aws", "service": "iam", "mfa": "enabled"}
+            ))
+    
+    return evidence_list
+
+
 def collect_system_evidence(workspace: Path) -> list[SystemEvidence]:
     """Collect all system-level evidence from workspace.
 
@@ -335,6 +402,7 @@ def collect_system_evidence(workspace: Path) -> list[SystemEvidence]:
     all_evidence.extend(detect_encryption_configuration(workspace))
     all_evidence.extend(detect_mfa_configuration(workspace))
     all_evidence.extend(detect_backup_configuration(workspace))
+    all_evidence.extend(detect_aws_security_configuration(workspace))
 
     # Remove duplicates (same control_id + framework + evidence_source)
     seen = set()

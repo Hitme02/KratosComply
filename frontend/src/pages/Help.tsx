@@ -396,7 +396,7 @@ export function HelpPage() {
                   <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground ml-4">
                     <li>Evidence hashes (SHA256 hashes of evidence, not the evidence itself)</li>
                     <li>Control states (VERIFIED_MACHINE, VERIFIED_SYSTEM, ATTESTED_HUMAN, MISSING_EVIDENCE, EXPIRED_EVIDENCE)</li>
-                    <li>Framework coverage (SOC2, ISO27001, GDPR, DPDP)</li>
+                    <li>Framework coverage (SOC2, ISO27001, GDPR, DPDP, HIPAA, PCI-DSS, NIST CSF)</li>
                     <li>Merkle root (cryptographic proof of integrity)</li>
                     <li>Ed25519 signature (cryptographic proof of authenticity)</li>
                     <li>Human signer identities (hashed for privacy)</li>
@@ -467,7 +467,7 @@ export function HelpPage() {
                 compliance evidence and legal-grade attestations suitable for:
               </p>
               <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground ml-4">
-                <li><strong>Auditors:</strong> SOC2, ISO27001, GDPR, DPDP Act compliance audits</li>
+                <li><strong>Auditors:</strong> SOC2, ISO27001, GDPR, DPDP Act, HIPAA, PCI-DSS, NIST CSF compliance audits</li>
                 <li><strong>Investors:</strong> Due diligence and compliance verification</li>
                 <li><strong>Regulators:</strong> Regulatory compliance submissions</li>
               </ul>

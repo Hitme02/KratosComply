@@ -123,7 +123,7 @@ export function LandingPage() {
               <ShieldCheck className="h-10 w-10 text-primary" />
               <CardTitle className="text-xl">Compliance Evidence Engine</CardTitle>
               <CardDescription className="text-base leading-relaxed">
-                Scans your codebase locally to identify evidence gaps for SOC2, ISO27001, GDPR, and DPDP Act compliance
+                Scans your codebase locally to identify evidence gaps for SOC2, ISO27001, GDPR, DPDP Act, HIPAA, PCI-DSS, and NIST CSF compliance. Detects secrets, infrastructure misconfigurations, container security issues, API vulnerabilities, database risks, and CI/CD pipeline problems.
               </CardDescription>
             </CardHeader>
           </Card>

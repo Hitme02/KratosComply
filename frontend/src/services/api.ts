@@ -59,6 +59,25 @@ export function getGitHubAuthUrl(): string {
   return `${baseURL}/api/auth/github`;
 }
 
+export interface EvidenceUploadRequest {
+  file_name: string;
+  file_type: "policy" | "sop" | "screenshot" | "log_export" | "declaration";
+  content_base64: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface EvidenceUploadResponse {
+  upload_id: string;
+  content_hash: string;
+  file_size: number;
+  message: string;
+}
+
+export async function uploadEvidence(payload: EvidenceUploadRequest): Promise<EvidenceUploadResponse> {
+  const { data } = await axiosInstance.post<EvidenceUploadResponse>("/api/human/upload", payload);
+  return data;
+}
+
 // Export api object for direct use
 export const api = {
   getAttestations: async () => {
@@ -74,4 +93,5 @@ export const api = {
   fetchAttestations,
   fetchGitHubRepos,
   getGitHubAuthUrl,
+  uploadEvidence,
 };

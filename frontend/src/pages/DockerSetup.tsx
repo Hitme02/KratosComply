@@ -11,25 +11,25 @@ const dockerCommands = [
   {
     step: 1,
     title: "Pull the KratosComply agent image",
-    command: "docker pull kratoscomply/agent:latest",
+    command: "docker pull popslala1/kratos-agent:latest",
     description: "Download the official agent container",
   },
   {
     step: 2,
     title: "Run the scan on your repository",
-    command: 'docker run -v "$(pwd):/workspace" kratoscomply/agent:latest scan /workspace --output /workspace/aegis-report.json',
+    command: 'docker run -v "$(pwd):/workspace" popslala1/kratos-agent:latest scan /workspace --output /workspace/aegis-report.json',
     description: "Mount your repo and generate the compliance report",
   },
   {
     step: 3,
     title: "Generate your signing keypair",
-    command: "docker run -v ~/.kratos/keys:/keys kratoscomply/agent:latest generate-key --keystore /keys",
+    command: "docker run -v ~/.kratos/keys:/keys popslala1/kratos-agent:latest generate-key --keystore /keys",
     description: "Create ed25519 keys for report signing (one-time setup)",
   },
   {
     step: 4,
     title: "Sign your report",
-    command: 'docker run -v "$(pwd):/workspace" -v ~/.kratos/keys:/keys kratoscomply/agent:latest scan /workspace --output /workspace/aegis-report.json --keystore /keys',
+    command: 'docker run -v "$(pwd):/workspace" -v ~/.kratos/keys:/keys popslala1/kratos-agent:latest scan /workspace --output /workspace/aegis-report.json --keystore /keys',
     description: "Generate a signed report with your private key",
   },
 ];

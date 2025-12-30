@@ -397,6 +397,130 @@ register_control(
     )
 )
 
+# Additional SOC2 Controls
+register_control(
+    ComplianceControl(
+        control_id="CC7.3",
+        framework="SOC2",
+        control_category=ControlCategory.INCIDENT_RESPONSE,
+        control_type=ControlType.PROCEDURAL,
+        verification_method=VerificationMethod.HUMAN_ATTESTATION,
+        required_evidence_types=[EvidenceType.POLICY_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Incident response procedures must be established and tested",
+        auditor_explanation="SOC2 CC7.3 requires documented incident response procedures with regular testing.",
+    )
+)
+
+register_control(
+    ComplianceControl(
+        control_id="CC8.1",
+        framework="SOC2",
+        control_category=ControlCategory.VENDOR_RISK,
+        control_type=ControlType.PROCEDURAL,
+        verification_method=VerificationMethod.HUMAN_ATTESTATION,
+        required_evidence_types=[EvidenceType.POLICY_PROOF],
+        review_frequency=timedelta(days=180),
+        expiry_policy=timedelta(days=365),
+        description="Vendor risk management procedures must be established",
+        auditor_explanation="SOC2 CC8.1 requires vendor risk assessment and management procedures.",
+    )
+)
+
+# HIPAA Controls
+register_control(
+    ComplianceControl(
+        control_id="164.308",
+        framework="HIPAA",
+        control_category=ControlCategory.ACCESS_CONTROL,
+        control_type=ControlType.SYSTEM,
+        verification_method=VerificationMethod.CONFIGURATION,
+        required_evidence_types=[EvidenceType.CONFIG_PROOF, EvidenceType.POLICY_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Access controls for ePHI",
+        auditor_explanation="HIPAA requires access controls to restrict ePHI access to authorized users only.",
+    )
+)
+
+register_control(
+    ComplianceControl(
+        control_id="164.312",
+        framework="HIPAA",
+        control_category=ControlCategory.ENCRYPTION,
+        control_type=ControlType.TECHNICAL,
+        verification_method=VerificationMethod.MACHINE,
+        required_evidence_types=[EvidenceType.CONFIG_PROOF, EvidenceType.CODE_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Encryption of ePHI in transit and at rest",
+        auditor_explanation="HIPAA requires encryption of ePHI to protect against unauthorized access.",
+    )
+)
+
+# PCI-DSS Controls
+register_control(
+    ComplianceControl(
+        control_id="3.4",
+        framework="PCI-DSS",
+        control_category=ControlCategory.SECRETS_MANAGEMENT,
+        control_type=ControlType.TECHNICAL,
+        verification_method=VerificationMethod.MACHINE,
+        required_evidence_types=[EvidenceType.CODE_PROOF, EvidenceType.CONFIG_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Render PAN unreadable anywhere it is stored",
+        auditor_explanation="PCI-DSS requires cardholder data to be encrypted or tokenized.",
+    )
+)
+
+register_control(
+    ComplianceControl(
+        control_id="8.2",
+        framework="PCI-DSS",
+        control_category=ControlCategory.ACCESS_CONTROL,
+        control_type=ControlType.SYSTEM,
+        verification_method=VerificationMethod.CONFIGURATION,
+        required_evidence_types=[EvidenceType.CONFIG_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Strong authentication for all system components",
+        auditor_explanation="PCI-DSS requires strong authentication mechanisms including MFA.",
+    )
+)
+
+# NIST Cybersecurity Framework Controls
+register_control(
+    ComplianceControl(
+        control_id="PR.AC-1",
+        framework="NIST-CSF",
+        control_category=ControlCategory.ACCESS_CONTROL,
+        control_type=ControlType.SYSTEM,
+        verification_method=VerificationMethod.CONFIGURATION,
+        required_evidence_types=[EvidenceType.CONFIG_PROOF, EvidenceType.POLICY_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Identities and credentials are issued, managed, verified, revoked, and audited",
+        auditor_explanation="NIST CSF requires identity and access management controls.",
+    )
+)
+
+register_control(
+    ComplianceControl(
+        control_id="PR.DS-1",
+        framework="NIST-CSF",
+        control_category=ControlCategory.DATA_PROTECTION,
+        control_type=ControlType.TECHNICAL,
+        verification_method=VerificationMethod.MACHINE,
+        required_evidence_types=[EvidenceType.CONFIG_PROOF, EvidenceType.CODE_PROOF],
+        review_frequency=timedelta(days=90),
+        expiry_policy=timedelta(days=365),
+        description="Data-at-rest is protected",
+        auditor_explanation="NIST CSF requires data-at-rest protection through encryption.",
+    )
+)
+
 
 def get_control(framework: str, control_id: str) -> ComplianceControl | None:
     """Get a compliance control by framework and control_id."""

@@ -85,7 +85,7 @@ jobs:
           context: .
           file: ./agent/Dockerfile
           push: false
-          tags: kratoscomply/agent:test
+          tags: popslala1/kratos-agent:test
       - name: Build frontend image
         uses: docker/build-push-action@v5
         with:
