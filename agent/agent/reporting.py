@@ -46,9 +46,13 @@ def generate_report(
     evidence_hashes = [f.evidence_hash for f in findings]
     
     # Determine frameworks from findings
-    frameworks = set()
+    frameworks_from_findings = set()
     for finding in findings:
-        frameworks.update(finding.compliance_frameworks_affected)
+        frameworks_from_findings.update(finding.compliance_frameworks_affected)
+    
+    # Always include all supported frameworks, even if no findings
+    ALL_SUPPORTED_FRAMEWORKS = ["SOC2", "ISO27001", "GDPR", "DPDP", "HIPAA", "PCI-DSS", "NIST-CSF"]
+    frameworks = set(ALL_SUPPORTED_FRAMEWORKS) | frameworks_from_findings
     
     report = {
         "report_version": "1.0",
@@ -58,7 +62,7 @@ def generate_report(
             "commit": _resolve_git_commit(target),
             "scan_time": datetime.now(timezone.utc).isoformat(),
         },
-        "standards": sorted(list(frameworks)) if frameworks else ["SOC2", "ISO27001"],
+        "standards": sorted(list(frameworks)),
         "findings": [asdict(finding) for finding in findings],
         "system_evidence": [
             {
