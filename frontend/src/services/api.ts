@@ -47,6 +47,7 @@ export interface GitHubRepository {
 export interface GitHubReposResponse {
   username: string;
   repositories: GitHubRepository[];
+  access_token?: string;  // Temporary: should use secure session in production
 }
 
 export async function fetchGitHubRepos(code: string, state: string): Promise<GitHubReposResponse> {
@@ -94,4 +95,12 @@ export const api = {
   fetchGitHubRepos,
   getGitHubAuthUrl,
   uploadEvidence,
+  scanRepository: async (repoUrl: string, accessToken: string, projectName?: string) => {
+    const { data } = await axiosInstance.post<{ report: any; message: string }>("/api/github/scan", {
+      repo_url: repoUrl,
+      access_token: accessToken,
+      project_name: projectName,
+    });
+    return data;
+  },
 };

@@ -22,6 +22,7 @@ load_dotenv()
 
 from database import Base, engine, get_db
 from github_service import exchange_code_for_token, fetch_user_info, fetch_user_repositories
+from ephemeral_worker import scan_github_repository_ephemeral
 from models import Attestation, HumanAttestation, EvidenceUpload
 from schemas import (
     AttestRequest,
@@ -283,6 +284,7 @@ class GitHubReposResponse(BaseModel):
     """Response containing user's repositories for selection."""
     username: str
     repositories: list[dict[str, Any]]
+    access_token: str | None = None  # Temporary: should use secure session in production
 
 
 @app.get("/api/auth/github")
@@ -339,7 +341,7 @@ async def github_callback(request: GitHubCallbackRequest) -> GitHubReposResponse
         logger.info("GitHub user authenticated: %s", username)
         
         # Fetch user's repositories
-        repos = await fetch_user_repositories(access_token, limit=20)
+        repos = await fetch_user_repositories(access_token, limit=50)
         if not repos:
             raise HTTPException(
                 status_code=404,
@@ -363,11 +365,18 @@ async def github_callback(request: GitHubCallbackRequest) -> GitHubReposResponse
         
         logger.info("Returning %d repositories for user selection", len(formatted_repos))
         
-        # NOTE: Access token should be stored securely for later use
-        # For now, we'll need to re-authenticate or use a session
-        # TODO: Store access token in secure session/database
+        # Store access token temporarily in response (in production, use secure session/redis)
+        # Frontend will need to send this back for scanning
+        # For now, we'll include it in the response (not ideal, but works for MVP)
+        # TODO: Implement proper session management with Redis or database
         
-        return GitHubReposResponse(username=username, repositories=formatted_repos)
+        # Store access token in response (frontend will store it in sessionStorage)
+        # In production, use secure session management (Redis, database)
+        return GitHubReposResponse(
+            username=username, 
+            repositories=formatted_repos,
+            access_token=access_token,  # Temporary: frontend stores in sessionStorage
+        )
         
     except httpx.HTTPStatusError as e:
         logger.error("GitHub API error: %s", e.response.text)
@@ -565,3 +574,62 @@ def list_human_attestations(
         limit=limit,
         offset=offset,
     )
+
+
+# GitHub Repository Scanning
+class ScanRepositoryRequest(BaseModel):
+    """Request to scan a GitHub repository."""
+    repo_url: str
+    access_token: str
+    project_name: str | None = None
+
+
+class ScanRepositoryResponse(BaseModel):
+    """Response containing signed compliance attestation."""
+    report: dict[str, Any]
+    message: str = "Scan completed. Workspace destroyed. No code persisted."
+
+
+@app.post("/api/github/scan", response_model=ScanRepositoryResponse)
+async def scan_repository(request: ScanRepositoryRequest) -> ScanRepositoryResponse:
+    """Scan a GitHub repository using ephemeral worker.
+    
+    This endpoint:
+    1. Creates ephemeral workspace
+    2. Clones repository (with authentication)
+    3. Runs agent scan
+    4. Generates signed compliance attestation
+    5. Destroys workspace immediately
+    6. Returns only the signed attestation (no source code)
+    
+    Output is identical to offline mode: signed compliance attestation only.
+    """
+    try:
+        logger.info("Starting ephemeral scan for repository: %s", request.repo_url)
+        logger.info("Project name: %s", request.project_name)
+        
+        report = await scan_github_repository_ephemeral(
+            repo_url=request.repo_url,
+            access_token=request.access_token,
+            project_name=request.project_name,
+        )
+        
+        logger.info("Ephemeral scan completed. Workspace destroyed. Report generated with %d findings.", 
+                   len(report.get("findings", [])))
+        
+        return ScanRepositoryResponse(
+            report=report,
+            message="Scan completed. Ephemeral workspace destroyed. No code persisted.",
+        )
+    except RuntimeError as e:
+        logger.exception("Ephemeral scan failed with RuntimeError")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to scan repository: {str(e)}",
+        )
+    except Exception as e:
+        logger.exception("Ephemeral scan failed with unexpected error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to scan repository: {str(e)}",
+        )

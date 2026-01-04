@@ -39,51 +39,25 @@ from .advanced_detectors import (
 
 logger = logging.getLogger(__name__)
 
+# Enhanced secret regex patterns to catch more formats (passwd, pwd, auth_token, etc.)
 SECRET_REGEX = re.compile(
-    r"(?P<var>[A-Za-z0-9_]*?(?:password|api[_-]?key|token|secret)[A-Za-z0-9_]*)"
+    r"(?P<var>[A-Za-z0-9_]*?(?:password|passwd|pwd|api[_-]?key|token|secret|auth[_-]?token|credential)[A-Za-z0-9_]*)"
     r"\s*(?:=|:)\s*(?P<value>['\"]?[^\s'\"#]+)",
     flags=re.IGNORECASE,
 )
 
 
 def _should_skip(path: Path) -> bool:
-    """Check if a file path should be skipped during scanning."""
-    # Check for excluded directory names in path parts
-    path_str = str(path)
-    path_parts = path.parts
-    path_name_lower = path.name.lower()
-    
-    # Skip if any excluded directory is in the path
-    for part in path_parts:
-        if part in EXCLUDED_DIRS:
+    """Skip excluded directories and files."""
+    parts = path.parts
+    for excluded in EXCLUDED_DIRS:
+        if excluded in parts:
             return True
-        # Also check for patterns like "venv", "site-packages", etc.
-        if "venv" in part.lower() or "site-packages" in part.lower():
-            return True
-        # Skip build artifacts
-        if "artifacts" in part.lower() or "build-info" in part.lower():
-            return True
-    
-    # Skip excluded filenames
     if path.name in EXCLUDED_FILENAMES:
         return True
-    
-    # Skip report files
-    if "report.json" in path_name_lower or "aegis-report.json" in path_name_lower:
-        return True
-    
-    # Skip compiled Python files
-    if path.suffix in {".pyc", ".pyo"}:
-        return True
-    
-    # Skip if in a virtual environment
-    if "venv" in path_str or "site-packages" in path_str:
-        return True
-    
-    # Skip build artifact JSON files (not config files)
-    if path.suffix == ".json" and any(artifact_dir in path_str.lower() for artifact_dir in ("artifacts", "build-info", "build/", "dist/")):
-        return True
-    
+    for pattern in EXCLUDED_FILENAMES:
+        if pattern.endswith("*") and path.name.startswith(pattern[:-1]):
+            return True
     return False
 
 
@@ -105,7 +79,28 @@ def scan_workspace(root: Path) -> list[RawFinding]:
         if file_path.suffix == ".py":
             findings.extend(_scan_python_file(file_path, root))
         else:
+            # Scan ALL file types for secrets, not just specific extensions
             findings.extend(_scan_text_file(file_path, root))
+            # Also scan code files (PHP, Java, C#, etc.) for secrets
+            if file_path.suffix in (".php", ".java", ".cs", ".js", ".ts", ".rb", ".go", ".cpp", ".c", ".h", ".swift", ".kt", ".scala"):
+                findings.extend(_scan_code_file_for_secrets(file_path, root))
+        
+        # Scan for SSH private keys in any file
+        if file_path.suffix in (".key", ".pem", ".p12", ".pfx") or "key" in file_path.name.lower() or "private" in file_path.name.lower():
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                if "-----BEGIN" in content and ("PRIVATE KEY" in content or "RSA PRIVATE KEY" in content or "DSA PRIVATE KEY" in content):
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=None,
+                        snippet="SSH private key file detected",
+                        severity="critical",
+                        confidence=0.99,
+                        metadata={"secret_type": "SSH_PRIVATE_KEY", "file_type": file_path.suffix}
+                    ))
+            except Exception:
+                pass
     
     # Enhanced detection capabilities
     findings.extend(_scan_cloud_secrets(root))
@@ -116,11 +111,25 @@ def scan_workspace(root: Path) -> list[RawFinding]:
     findings.extend(_scan_cicd_security(root))
     findings.extend(_scan_dependencies(root))
     
-    # Compliance framework-specific scans (using improved detection techniques)
-    findings.extend(_scan_dpdp_compliance(root))
-    findings.extend(_scan_gdpr_compliance(root))
+    # Security vulnerability detection (not just compliance)
+    findings.extend(_scan_weak_encryption(root))
+    findings.extend(_scan_injection_vulnerabilities(root))
+    findings.extend(_scan_weak_authentication(root))
+    findings.extend(_scan_missing_logging(root))
+    findings.extend(_scan_command_injection(root))
+    findings.extend(_scan_xss_vulnerabilities(root))
     
-    # DPDP and GDPR compliance checks
+    # Industry-grade security detections
+    findings.extend(_scan_advanced_secrets(root))
+    findings.extend(_scan_authentication_security(root))
+    findings.extend(_scan_access_control_issues(root))
+    findings.extend(_scan_logging_security(root))
+    findings.extend(_scan_encryption_security(root))
+    findings.extend(_scan_insecure_configurations(root))
+    findings.extend(_scan_supply_chain_security(root))
+    
+    # Compliance framework-specific scans (using improved detection techniques)
+    # Only scan once (removed duplicate scans)
     findings.extend(_scan_dpdp_compliance(root))
     findings.extend(_scan_gdpr_compliance(root))
     
@@ -128,205 +137,366 @@ def scan_workspace(root: Path) -> list[RawFinding]:
 
 
 def _iter_files(root: Path) -> Iterable[Path]:
+    """Iterate over all files in the workspace, excluding skipped paths."""
     for path in root.rglob("*"):
         if path.is_file() and not _should_skip(path):
             yield path
 
 
 def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
-    try:
-        source = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return []
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        logger.debug("Unable to parse %s", path)
-        return []
-
+    """Scan Python files for compliance control violations."""
     findings: list[RawFinding] = []
-    lines = source.splitlines()
     
-    # Track context for better detection
-    is_test_file = "test" in path.name.lower() or "spec" in path.name.lower()
-    is_example_file = "example" in path.name.lower() or "sample" in path.name.lower()
+    try:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
     
-    for node in ast.walk(tree):
-        # Detect secrets in environment variable loading (getenv with defaults)
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in ("getenv", "environ.get"):
-                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
-                    default_value = node.args[1].value
-                    if isinstance(default_value, str) and _looks_like_real_secret(default_value):
-                        line_no = getattr(node, "lineno", None)
-                        findings.append(RawFinding(
-                            type="hardcoded_secret",
-                            file=_relative_path(path, root),
-                            line=line_no,
-                            snippet=_extract_snippet(lines, line_no),
-                            severity="high",
-                            confidence=0.95,
-                            metadata={"context": "environment_default", "var_name": node.args[0].value if isinstance(node.args[0], ast.Constant) else "unknown"}
-                        ))
-        
-        # Detect secrets in class attributes (Pydantic, dataclasses)
-        if isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, ast.AnnAssign):
-                    if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
-                        var_name = item.target.id if isinstance(item.target, ast.Name) else "unknown"
-                        if _contains_secret_keyword(var_name) and _looks_like_real_secret(item.value.value):
-                            line_no = getattr(item, "lineno", None)
-                            findings.append(RawFinding(
-                                type="hardcoded_secret",
-                                file=_relative_path(path, root),
-                                line=line_no,
-                                snippet=_extract_snippet(lines, line_no),
-                                severity="high",
-                                confidence=0.9,
-                                metadata={"context": "class_attribute", "class_name": node.name, "var_name": var_name}
-                            ))
-        
-        # Standard assignment detection
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = []
-            if isinstance(node, ast.Assign):
-                targets = [t for t in node.targets if isinstance(t, ast.Name)]
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                targets = [node.target]
-            if not targets:
-                continue
-
-            literal_value = None
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                literal_value = node.value.value
-
-            for target in targets:
-                var_name = target.id
-                
-                # Skip if variable name matches false positive patterns
-                if not _contains_secret_keyword(var_name):
-                    continue
-                
-                # Skip filename/path constants
-                if any(suffix in var_name.upper() for suffix in ("_FILENAME", "_PATH", "_DIR", "_EXTENSION", "_EXTENSIONS")):
-                    continue
-                
-                # Skip boolean flags (is_*, has_*, should_*)
-                if var_name.startswith(("is_", "has_", "should_", "can_", "will_")):
-                    continue
-                
-                # Only flag if there's an actual string literal that looks like a secret
-                is_real_secret = False
-                confidence = 0.7
-                
-                # Adjust confidence based on context
-                if is_test_file:
-                    confidence -= 0.2
-                if is_example_file:
-                    confidence -= 0.3
-                
-                if literal_value:
-                    # Check if the literal value looks like a real secret
-                    if _looks_like_real_secret(literal_value):
-                        is_real_secret = True
-                        confidence = min(0.95, confidence + 0.25)
-                    # Or if it's a reasonably long string (likely not a config constant)
-                    elif len(literal_value) >= 8 and not any(
-                        fp in var_name.upper() 
-                        for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "SECRET_TEXT", "SECRET_", "_FILENAME", "_PATH")
-                    ):
-                        # Variable name suggests secret AND has a substantial value
-                        is_real_secret = True
-                        confidence = min(0.85, confidence + 0.15)
-                else:
-                    # No literal value - could be assignment from another variable
-                    # Check if it's a UI component (Streamlit, etc.) - these are false positives
-                    snippet_line = _extract_snippet(lines, getattr(node, "lineno", None))
-                    if any(ui_pattern in snippet_line for ui_pattern in (
-                        "st.text_input", "st.password_input", "st.secret", 
-                        "text_input", "password_input", "input(", "Input(",
-                        "type=\"password\"", "type='password'"
-                    )):
-                        # This is a UI component, not a hardcoded secret
-                        continue
-                    
-                    # Only flag if variable name is very explicit (not just "token")
-                    explicit_secret_names = ("PASSWORD", "API_KEY", "SECRET", "PRIVATE_KEY", "ACCESS_KEY")
-                    if any(name in var_name.upper() for name in explicit_secret_names):
-                        # But skip if it's clearly a false positive pattern
-                        if not any(fp in var_name.upper() for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "_FILENAME", "_PATH")):
-                            # This might be a secret, but lower confidence
-                            is_real_secret = True
-                            confidence = max(0.5, confidence - 0.1)
-                
-                if is_real_secret:
-                    line_no = getattr(node, "lineno", None)
-                    snippet = _extract_snippet(lines, line_no)
-                    findings.append(
-                        RawFinding(
-                            type="hardcoded_secret",
-                            file=_relative_path(path, root),
-                            line=line_no,
-                            snippet=snippet,
-                            severity="high",
-                            confidence=max(0.0, min(1.0, confidence)),
-                            metadata={
-                                "var_name": var_name,
-                                "literal": literal_value,
-                                "is_test_file": is_test_file,
-                                "is_example_file": is_example_file,
-                            },
-                        )
-                    )
+    # Check for hardcoded secrets
+    findings.extend(_scan_python_secrets(path, root, content))
+    
     return findings
 
 
-def _extract_snippet(lines: list[str], line_no: int | None) -> str:
-    if line_no is None or line_no - 1 >= len(lines):
-        return ""
-    return lines[line_no - 1].strip()
+def _scan_python_secrets(path: Path, root: Path, content: str) -> list[RawFinding]:
+    """Scan Python code for hardcoded secrets."""
+    findings: list[RawFinding] = []
+    lines = content.splitlines()
+    is_test_file = "test" in path.name.lower() or "spec" in path.name.lower()
+    is_example_file = "example" in path.name.lower() or "sample" in path.name.lower()
+    
+    for line_no, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        
+        # Skip comment-only lines
+        if stripped.startswith('#'):
+            continue
+        
+        # Check for hardcoded secrets using regex
+        match = SECRET_REGEX.search(line)
+        if match:
+            var_name = match.group("var")
+            value = match.group("value")
+            
+            # Skip environment variable references
+            if value and ('${' in value or value.startswith('$')):
+                continue
+            
+            # Skip false positives
+            if _contains_secret_keyword(var_name) and not any(
+                fp in var_name.upper() 
+                for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "SECRET_TEXT")
+            ):
+                # Check if value looks like a real secret
+                if value and _looks_like_real_secret(value.strip("'\"")):
+                    confidence = 0.9
+                    if is_test_file:
+                        confidence *= 0.7
+                    if is_example_file:
+                        confidence *= 0.6
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=confidence,
+                        metadata={
+                            "is_test_file": is_test_file,
+                            "is_example_file": is_example_file,
+                        }
+                    ))
+    
+    return findings
 
 
-def _contains_secret_keyword(value: str) -> bool:
-    """Check if a value contains secret-related keywords, excluding false positives."""
+def _contains_secret_keyword(var_name: str) -> bool:
+    """Check if variable name contains a secret-related keyword."""
+    return any(keyword in var_name.upper() for keyword in SECRET_KEYWORDS)
+
+
+def _looks_like_real_secret(value: str) -> bool:
+    """Determine if a value looks like a real secret (not a placeholder)."""
     if not value:
         return False
     
     upper_value = value.upper()
     
-    # Check for false positive patterns first
+    # Check against false positive patterns
     from .config import FALSE_POSITIVE_PATTERNS
     if any(fp_pattern in upper_value for fp_pattern in FALSE_POSITIVE_PATTERNS):
         return False
     
-    # Check for secret keywords
-    return any(keyword in upper_value for keyword in SECRET_KEYWORDS)
-
-
-def _looks_like_real_secret(value: str) -> bool:
-    """Check if a string value looks like an actual secret (not just a variable name)."""
-    if not value or len(value) < 8:
-        return False
+    # Check for known secret patterns
+    secret_indicators = [
+        "sk_live_", "pk_live_", "sk_test_", "pk_test_",  # Stripe
+        "xoxb-", "xoxa-",  # Slack
+        "ghp_", "github_pat_",  # GitHub
+        "AKIA",  # AWS
+        "AIza",  # GCP
+    ]
     
-    # Check for common secret prefixes
-    secret_prefixes = ("sk_", "pk_", "AKIA", "AIza", "ghp_", "gho_", "xoxb-", "xoxa-", "xoxp-")
-    if any(value.startswith(prefix) for prefix in secret_prefixes):
+    if any(indicator in value for indicator in secret_indicators):
         return True
     
-    # Check for long base64-like strings (32+ chars, alphanumeric + / =)
-    if len(value) >= 32 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in value):
+    # Check for SSH key markers
+    if "-----BEGIN" in value and ("PRIVATE KEY" in value or "RSA PRIVATE KEY" in value):
         return True
     
-    # Check for long hex strings (32+ chars, hex only)
-    if len(value) >= 32 and all(c in "0123456789abcdefABCDEF" for c in value):
+    # Check for database connection strings with embedded passwords
+    if "password=" in value.lower() and len(value) > 20:
         return True
     
-    # Check for JWT tokens (starts with eyJ)
-    if value.startswith("eyJ"):
+    # Check for UUID-like patterns (often used as tokens)
+    import re
+    uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    if re.match(uuid_pattern, value, re.IGNORECASE):
+        return True
+    
+    # Check for long alphanumeric strings (likely tokens)
+    if len(value) >= 20 and value.isalnum():
+        return True
+    
+    # Check for base64-like strings
+    if len(value) >= 16 and all(c.isalnum() or c in ('+', '/', '=') for c in value):
         return True
     
     return False
+
+
+def _scan_code_file_for_secrets(path: Path, root: Path) -> list[RawFinding]:
+    """Scan code files (PHP, Java, C#, etc.) for hardcoded secrets with industry-grade patterns."""
+    findings: list[RawFinding] = []
+    
+    try:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+    
+    lines = content.splitlines()
+    file_lower = path.name.lower()
+    
+    # Skip test files with lower confidence (but still scan them)
+    is_test_file = "test" in file_lower or "spec" in file_lower
+    is_example_file = "example" in file_lower or "sample" in file_lower
+    
+    # Enhanced regex patterns for different languages and formats
+    patterns = [
+        # Pattern 1: password = "value" or password: "value" (general, more flexible)
+        re.compile(
+            r"(?:password|passwd|pwd|secret|api[_-]?key|token|auth[_-]?token|credential|pass)\s*[:=]\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 2: $password = "value" (PHP) - more flexible spacing
+        re.compile(
+            r"\$(?:password|passwd|pwd|secret|api[_-]?key|token|auth[_-]?token)\s*=\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 3: String password = "value" (Java/C#) - more flexible
+        re.compile(
+            r"(?:String|string|const|var|let|final|private|public|protected|static)\s+(?:password|passwd|pwd|secret|api[_-]?key|token)\s*=\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 4: password => "value" (PHP arrays, JavaScript objects)
+        re.compile(
+            r"['\"]?(?:password|passwd|pwd|secret|api[_-]?key|token|auth[_-]?token)['\"]?\s*[:=]>\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 5: password: "value" (YAML, JSON-like, config files)
+        re.compile(
+            r"(?:password|passwd|pwd|secret|api[_-]?key|token):\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 6: Array of passwords (PHP, JavaScript) - improved to catch multi-line arrays
+        re.compile(
+            r"(?:password|passwd|pwd|secret|api[_-]?key|token)\s*=\s*\[[^\]]*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE | re.MULTILINE | re.DOTALL
+        ),
+        # Pattern 7: PHP array with passwords (array('password' => 'value'))
+        re.compile(
+            r"['\"]?(?:password|passwd|pwd|secret|api[_-]?key|token)['\"]?\s*=>\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 8: PHP array syntax: array("password" => "value") or ["password" => "value"]
+        re.compile(
+            r"(?:array\s*\(|\[)\s*['\"]?(?:password|passwd|pwd|secret|api[_-]?key|token)['\"]?\s*=>\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 9: Database connection strings (more flexible)
+        re.compile(
+            r"(?:db[_-]?(?:password|pass)|database[_-]?(?:password|pass)|connection[_-]?string|pwd)\s*[:=]\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 10: Java/C# field assignment: password = "value" (without type)
+        re.compile(
+            r"(?:password|passwd|pwd|secret|api[_-]?key|token)\s*=\s*['\"]([^'\"]{3,})['\"]",
+            re.IGNORECASE
+        ),
+        # Pattern 11: Config file format: password=value (no quotes)
+        re.compile(
+            r"(?:password|passwd|pwd|secret|api[_-]?key|token)\s*=\s*([^\s#]{3,})",
+            re.IGNORECASE
+        ),
+        # Pattern 12: Empty password detection (security issue)
+        re.compile(
+            r"(?:password|passwd|pwd)\s*[:=]\s*['\"]\s*['\"]",
+            re.IGNORECASE
+        ),
+    ]
+    
+    # Check for SSH private keys
+    if "-----BEGIN" in content and ("PRIVATE KEY" in content or "RSA PRIVATE KEY" in content or "DSA PRIVATE KEY" in content):
+        findings.append(RawFinding(
+            type="hardcoded_secret",
+            file=_relative_path(path, root),
+            line=None,
+            snippet="SSH private key detected in file",
+            severity="critical",
+            confidence=0.99,
+            metadata={"language": path.suffix, "pattern": "ssh_private_key", "secret_type": "SSH_PRIVATE_KEY"}
+        ))
+    
+    # Special handling for PHP arrays - scan multi-line arrays
+    if path.suffix == ".php":
+        # Look for PHP array patterns that span multiple lines
+        # Pattern: $passwords = array('admin' => 'admin12345', 'user' => 'password')
+        php_array_pattern = re.compile(
+            r'\$[a-zA-Z_]*pass[a-zA-Z_]*\s*=\s*array\s*\([^)]*(?:=>\s*["\']([^"\']{3,})["\']|["\']([^"\']{3,})["\'])',
+            re.IGNORECASE | re.MULTILINE | re.DOTALL
+        )
+        for match in php_array_pattern.finditer(content):
+            value = match.group(1) or match.group(2)
+            if value and len(value.strip()) >= 3:
+                value_clean = value.strip("'\" ")
+                # Skip placeholders
+                if value_clean.upper() not in ('CHANGE-ME', 'REPLACE_ME', 'PLACEHOLDER', 'EXAMPLE', 'TODO', 'FIXME'):
+                    # Find line number
+                    line_no = content[:match.start()].count('\n') + 1
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(path, root),
+                        line=line_no,
+                        snippet=match.group(0)[:200],
+                        severity="critical",
+                        confidence=0.9,
+                        metadata={"language": "php", "pattern": "php_array_password", "secret_type": "HARDCODED_PASSWORD"}
+                    ))
+    
+    # Special handling for Java - detect simple password assignments
+    if path.suffix == ".java":
+        # Pattern: password = "pass1" or password = "pass2" (simple assignments)
+        java_simple_pattern = re.compile(
+            r'(?:password|passwd|pwd)\s*=\s*["\']([^"\']{3,})["\']',
+            re.IGNORECASE
+        )
+        for line_no, line in enumerate(lines, start=1):
+            if java_simple_pattern.search(line):
+                match = java_simple_pattern.search(line)
+                value = match.group(1)
+                if value and len(value.strip()) >= 3:
+                    value_clean = value.strip("'\" ")
+                    # Skip placeholders
+                    if value_clean.upper() not in ('CHANGE-ME', 'REPLACE_ME', 'PLACEHOLDER', 'EXAMPLE'):
+                        findings.append(RawFinding(
+                            type="hardcoded_secret",
+                            file=_relative_path(path, root),
+                            line=line_no,
+                            snippet=line.strip()[:200],
+                            severity="critical",
+                            confidence=0.9,
+                            metadata={"language": "java", "pattern": "java_simple_password", "secret_type": "HARDCODED_PASSWORD"}
+                        ))
+    
+    for line_no, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        
+        # Skip comment lines (but check for secrets in comments too with lower confidence)
+        is_comment = stripped.startswith(('//', '/*', '*', '#', '--', '<!--'))
+        
+        # Skip obvious placeholder patterns
+        if any(ph in stripped.upper() for ph in ('PLACEHOLDER', 'YOUR_', 'CHANGE-ME', 'REPLACE_ME', 'EXAMPLE', 'TODO', 'FIXME')):
+            # But still check if it contains a real secret pattern
+            if not any(secret_word in stripped.upper() for secret_word in ('PASSWORD', 'SECRET', 'TOKEN', 'KEY')):
+                continue
+        
+        # Check for empty password (security issue)
+        if re.search(r'(?:password|passwd|pwd)\s*[:=]\s*["\']\s*["\']', line, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="hardcoded_secret",
+                file=_relative_path(path, root),
+                line=line_no,
+                snippet=line.strip()[:200],
+                severity="high",
+                confidence=0.95,
+                metadata={"language": path.suffix, "pattern": "empty_password", "issue": "Empty password detected"}
+            ))
+            continue
+        
+        # Check all patterns
+        for pattern in patterns:
+            for match in pattern.finditer(line):
+                value = match.group(1) if match.lastindex else match.group(0)
+                if not value:
+                    continue
+                
+                value_clean = value.strip("'\" ")
+                
+                # Skip if it's clearly a placeholder (but be less aggressive)
+                value_upper = value_clean.upper()
+                placeholder_indicators = ('CHANGE-ME', 'REPLACE_ME', 'YOURTOKENHERE', 'PLACEHOLDER', 'TODO', 'XXX', 'FIXME', 'YOUR_', 'SET_', 'CONFIG')
+                # Only skip if it's EXACTLY a placeholder, not if it contains one
+                if value_upper in placeholder_indicators or value_upper == 'EXAMPLE':
+                    continue
+                
+                # Skip very short values (likely not secrets) - but allow 3+ chars
+                if len(value_clean) < 3:
+                    continue
+                
+                # Skip common false positives (but be more strict)
+                false_positives = ('null', 'none', 'true', 'false', 'undefined', 'nil')
+                if value_clean.lower() in false_positives:
+                    continue
+                
+                # Check if it looks like a real secret
+                confidence = 0.85
+                if is_test_file:
+                    confidence *= 0.7  # Lower confidence for test files
+                if is_example_file:
+                    confidence *= 0.6  # Lower confidence for example files
+                if is_comment:
+                    confidence *= 0.8  # Lower confidence for comments
+                
+                # High confidence for known secret patterns
+                if _looks_like_real_secret(value_clean):
+                    confidence = min(0.99, confidence + 0.1)
+                elif len(value_clean) >= 8:
+                    # Medium confidence for long values
+                    confidence = min(0.9, confidence)
+                elif len(value_clean) >= 4:
+                    # Lower confidence for short values (but still check)
+                    confidence = max(0.5, confidence - 0.2)
+                
+                # Only report if confidence is reasonable (lowered threshold to catch more)
+                if confidence >= 0.4:
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high" if confidence >= 0.8 else "medium",
+                        confidence=confidence,
+                        metadata={
+                            "language": path.suffix,
+                            "pattern": "code_file_scan",
+                            "is_test_file": is_test_file,
+                            "is_example_file": is_example_file,
+                            "is_comment": is_comment
+                        }
+                    ))
+                    break  # Only report once per line
+    
+    return findings
 
 
 def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
@@ -338,7 +508,10 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
     if path.name.endswith(('.env.example', '.env.sample', '.env.template')):
         return []
     
-    if not (is_iac_file or is_secret_file):
+    # Also scan config files for secrets (like .conf files)
+    is_config_file = suffix in (".conf", ".ini", ".properties", ".cfg")
+    
+    if not (is_iac_file or is_secret_file or is_config_file):
         return []
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -371,7 +544,7 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
             )
             continue
 
-        if is_secret_file:
+        if is_secret_file or is_config_file:
             match = SECRET_REGEX.search(line)
             if match:
                 var_name = match.group("var")
@@ -393,186 +566,18 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
                                 type="hardcoded_secret",
                                 file=_relative_path(path, root),
                                 line=line_no,
-                                snippet=line.strip(),
+                                snippet=line.strip()[:200],
                                 severity="high",
                                 confidence=0.9,
+                                metadata={"file_type": suffix}
                             )
                         )
-                    elif value and len(value.strip("'\" ")) >= 8:
-                        # Long value, likely a secret (but check for placeholders)
-                        value_clean = value.strip("'\" ").upper()
-                        if not any(ph in value_clean for ph in ('CHANGE-ME', 'REPLACE_ME', 'YOURTOKENHERE', 'PLACEHOLDER', 'EXAMPLE')):
-                            findings.append(
-                                RawFinding(
-                                    type="hardcoded_secret",
-                                    file=_relative_path(path, root),
-                                    line=line_no,
-                                    snippet=line.strip(),
-                                    severity="high",
-                                    confidence=0.8,
-                                )
-                            )
-    return findings
 
-
-def _scan_dpdp_compliance(root: Path) -> list[RawFinding]:
-    """Scan for DPDP Act (India) compliance control violations.
-    
-    Uses improved detection techniques:
-    - Dependency analysis (Supabase, Auth0, etc.)
-    - API route analysis
-    - AST function call analysis
-    - Database schema analysis
-    - Configuration file parsing
-    """
-    findings: list[RawFinding] = []
-    
-    # Improved detection: Use multiple techniques
-    consent_found = (
-        detect_consent_via_dependencies(root) or
-        detect_consent_via_api_routes(root) or
-        detect_consent_via_ast(root) or
-        detect_consent_via_database_schema(root)
-    )
-    
-    retention_found = detect_retention_via_config(root)
-    
-    access_logging_found = (
-        detect_access_logging_via_ast(root) or
-        detect_access_logging_via_config(root)
-    )
-    
-    # Generate findings for missing evidence
-    if not retention_found:
-        findings.append(
-            RawFinding(
-                type="dpdp_missing_retention",
-                file=".",
-                line=None,
-                snippet="No data retention configuration found",
-                severity="medium",
-                confidence=0.7,
-                metadata={"evidence_type": "config_proof"},
-            )
-        )
-    
-    if not consent_found:
-        findings.append(
-            RawFinding(
-                type="dpdp_missing_consent",
-                file=".",
-                line=None,
-                snippet="No consent handling mechanisms found",
-                severity="high",
-                confidence=0.7,
-                metadata={"evidence_type": "code_proof"},
-            )
-        )
-    
-    if not access_logging_found:
-        findings.append(
-            RawFinding(
-                type="dpdp_missing_access_logging",
-                file=".",
-                line=None,
-                snippet="No access logging for personal data found",
-                severity="high",
-                confidence=0.7,
-                metadata={"evidence_type": "log_proof"},
-            )
-        )
-    
-    return findings
-
-
-def _scan_gdpr_compliance(root: Path) -> list[RawFinding]:
-    """Scan for GDPR (EU) compliance control violations.
-    
-    Uses improved detection techniques:
-    - Dependency analysis (encryption libraries)
-    - API route analysis (data export, erasure endpoints)
-    - AST function call analysis
-    - Configuration file parsing
-    """
-    findings: list[RawFinding] = []
-    
-    # Improved detection: Use multiple techniques
-    encryption_found = (
-        detect_encryption_via_dependencies(root) or
-        detect_encryption_via_config(root)
-    )
-    
-    # Consent is shared with DPDP, already checked there
-    consent_found = (
-        detect_consent_via_dependencies(root) or
-        detect_consent_via_api_routes(root) or
-        detect_consent_via_ast(root) or
-        detect_consent_via_database_schema(root)
-    )
-    
-    # Retention is shared with DPDP, already checked there
-    retention_found = detect_retention_via_config(root)
-    
-    # GDPR-specific: Right to erasure
-    erasure_found = (
-        detect_right_to_erasure_via_api_routes(root) or
-        detect_right_to_erasure_via_ast(root)
-    )
-    
-    # GDPR-specific: Data portability
-    portability_found = (
-        detect_data_portability_via_api_routes(root) or
-        detect_data_portability_via_ast(root)
-    )
-    
-    # Generate findings for missing evidence (only for GDPR-specific controls)
-    if not encryption_found:
-        findings.append(
-            RawFinding(
-                type="gdpr_missing_encryption",
-                file=".",
-                line=None,
-                snippet="No encryption configuration found",
-                severity="high",
-                confidence=0.7,
-                metadata={"evidence_type": "code_proof"},
-            )
-        )
-    
-    if not erasure_found:
-        findings.append(
-            RawFinding(
-                type="gdpr_missing_right_to_erasure",
-                file=".",
-                line=None,
-                snippet="No right to erasure mechanisms found",
-                severity="medium",
-                confidence=0.7,
-                metadata={"evidence_type": "code_proof"},
-            )
-        )
-    
-    if not portability_found:
-        findings.append(
-            RawFinding(
-                type="gdpr_missing_data_portability",
-                file=".",
-                line=None,
-                snippet="No data portability mechanisms found",
-                severity="medium",
-                confidence=0.7,
-                metadata={"evidence_type": "code_proof"},
-            )
-        )
-    
-    # Note: Consent and retention are already checked in DPDP scan
-    # to avoid duplicate findings, but they apply to both frameworks
-    
     return findings
 
 
 def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
-    """Detect cloud provider-specific secrets."""
+    """Scan for cloud provider secrets (AWS, GCP, Azure, etc.)."""
     findings: list[RawFinding] = []
     
     for file_path in _iter_files(root):
@@ -585,174 +590,95 @@ def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
             continue
         
         for provider, patterns in CLOUD_SECRET_PATTERNS.items():
-            for pattern, secret_type in patterns:
+            for pattern, description in patterns:
                 matches = re.finditer(pattern, content, re.IGNORECASE)
                 for match in matches:
-                    line_no = content[:match.start()].count("\n") + 1
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(file_path, root),
-                        line=line_no,
-                        snippet=match.group(0)[:100],
-                        severity="critical" if provider in ("aws", "azure") else "high",
-                        confidence=0.98,
-                        metadata={
-                            "provider": provider,
-                            "secret_type": secret_type,
-                            "context": "cloud_credential"
-                        },
+                        line=None,
+                        snippet=match.group(0)[:200],
+                        severity="critical",
+                        confidence=0.95,
+                        metadata={"provider": provider, "secret_type": description}
                     ))
     
     return findings
 
 
 def _scan_terraform_security(root: Path) -> list[RawFinding]:
-    """Enhanced Terraform/Infrastructure-as-Code security scanning."""
+    """Scan Terraform files for security misconfigurations."""
     findings: list[RawFinding] = []
     
-    terraform_files = [f for f in _iter_files(root) if f.suffix in (".tf", ".tf.json")]
-    
-    for tf_file in terraform_files:
-        if _should_skip(tf_file):
+    for file_path in _iter_files(root):
+        if file_path.suffix not in (".tf", ".tf.json"):
             continue
         
         try:
-            content = tf_file.read_text(encoding="utf-8", errors="ignore")
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
         
-        # Detect public S3 buckets
-        s3_public_pattern = r'resource\s+"aws_s3_bucket"[^}]+(?:public_access_block|acl\s*=\s*["\']public)'
-        if re.search(s3_public_pattern, content, re.IGNORECASE | re.DOTALL):
+        lines = content.splitlines()
+        
+        # Check for public ACLs
+        for line_no, line in enumerate(lines, start=1):
+            if PUBLIC_ACL_MARKER in line:
+                findings.append(RawFinding(
+                    type="insecure_acl",
+                    file=_relative_path(file_path, root),
+                    line=line_no,
+                    snippet=line.strip()[:200],
+                    severity="high",
+                    confidence=0.9,
+                ))
+        
+        # Check for IAM policies with wildcard permissions
+        if re.search(r'["\']\*["\']', content):
             findings.append(RawFinding(
                 type="insecure_acl",
-                file=_relative_path(tf_file, root),
+                file=_relative_path(file_path, root),
                 line=None,
-                snippet="Public S3 bucket detected",
+                snippet="IAM policy with wildcard permissions",
                 severity="high",
                 confidence=0.9,
-                metadata={"resource_type": "s3_bucket", "control_id": "SOC2-CC6.1"}
+                metadata={"issue": "Wildcard permissions in IAM policy"}
             ))
         
-        # Detect unencrypted RDS instances
-        rds_pattern = r'resource\s+"aws_db_instance"[^}]+storage_encrypted\s*=\s*false'
-        if re.search(rds_pattern, content, re.IGNORECASE | re.DOTALL):
+        # Check for public API endpoints
+        if re.search(r'authorization\s*=\s*["\']?NONE["\']?', content, re.IGNORECASE):
             findings.append(RawFinding(
-                type="unencrypted_database",
-                file=_relative_path(tf_file, root),
+                type="unauthenticated_api_endpoint",
+                file=_relative_path(file_path, root),
                 line=None,
-                snippet="RDS instance without encryption",
+                snippet="Public API endpoint without authorization",
                 severity="high",
-                confidence=0.85,
-                metadata={"resource_type": "rds_instance", "control_id": "SOC2-CC6.1"}
+                confidence=0.9,
             ))
         
-        # Detect security groups allowing 0.0.0.0/0
-        sg_public = r'cidr_blocks\s*=\s*\[["\']0\.0\.0\.0/0["\']'
-        if re.search(sg_public, content, re.IGNORECASE):
+        # Check for public network access
+        if re.search(r'public[_-]?access\s*=\s*true', content, re.IGNORECASE):
             findings.append(RawFinding(
-                type="insecure_network_acl",
-                file=_relative_path(tf_file, root),
+                type="insecure_acl",
+                file=_relative_path(file_path, root),
                 line=None,
-                snippet="Security group allows public access (0.0.0.0/0)",
-                severity="critical",
-                confidence=0.95,
-                metadata={"resource_type": "security_group", "control_id": "SOC2-CC6.1"}
+                snippet="Public network access enabled",
+                severity="high",
+                confidence=0.9,
             ))
     
     return findings
 
 
 def _scan_container_security(root: Path) -> list[RawFinding]:
-    """Detect container security compliance issues."""
+    """Scan container configuration files for security issues."""
     findings: list[RawFinding] = []
     
-    # Scan Dockerfiles
-    for dockerfile in root.rglob("Dockerfile*"):
-        if _should_skip(dockerfile):
+    for file_path in _iter_files(root):
+        if file_path.suffix not in (".yaml", ".yml", ".json"):
             continue
         
-        try:
-            content = dockerfile.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        
-        # Detect running as root
-        if re.search(r'USER\s+root', content, re.IGNORECASE) or not re.search(r'USER\s+', content, re.IGNORECASE):
-            findings.append(RawFinding(
-                type="container_runs_as_root",
-                file=_relative_path(dockerfile, root),
-                line=None,
-                snippet="Container runs as root user",
-                severity="medium",
-                confidence=0.9,
-                metadata={"control_id": "SOC2-CC6.1", "container_type": "docker"}
-            ))
-        
-        # Detect secrets in Dockerfile
-        secret_pattern = r'(?:ENV|ARG)\s+(?:PASSWORD|SECRET|API_KEY|TOKEN)\s*=\s*["\']([^"\']+)["\']'
-        matches = re.finditer(secret_pattern, content, re.IGNORECASE)
-        for match in matches:
-            line_no = content[:match.start()].count("\n") + 1
-            findings.append(RawFinding(
-                type="hardcoded_secret",
-                file=_relative_path(dockerfile, root),
-                line=line_no,
-                snippet=match.group(0),
-                severity="high",
-                confidence=0.95,
-                metadata={"context": "dockerfile", "control_id": "SOC2-CC6.2"}
-            ))
-    
-    # Scan Kubernetes manifests
-    for k8s_file in list(root.rglob("*.yaml")) + list(root.rglob("*.yml")):
-        if _should_skip(k8s_file):
-            continue
-        
-        if "k8s" not in str(k8s_file) and "kubernetes" not in str(k8s_file):
-            continue
-        
-        try:
-            content = k8s_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        
-        # Detect secrets in plain text
-        if re.search(r'password:\s*["\']([^"\']+)["\']', content, re.IGNORECASE):
-            findings.append(RawFinding(
-                type="hardcoded_secret",
-                file=_relative_path(k8s_file, root),
-                line=None,
-                snippet="Secret in plain text in Kubernetes manifest",
-                severity="high",
-                confidence=0.9,
-                metadata={"context": "kubernetes", "control_id": "SOC2-CC6.2"}
-            ))
-        
-        # Detect missing security contexts
-        if "kind: Deployment" in content or "kind: Pod" in content:
-            if "securityContext" not in content:
-                findings.append(RawFinding(
-                    type="missing_security_context",
-                    file=_relative_path(k8s_file, root),
-                    line=None,
-                    snippet="Missing securityContext in Kubernetes manifest",
-                    severity="medium",
-                    confidence=0.8,
-                    metadata={"control_id": "SOC2-CC6.1"}
-                ))
-    
-    return findings
-
-
-def _scan_api_security(root: Path) -> list[RawFinding]:
-    """Detect API security compliance issues."""
-    findings: list[RawFinding] = []
-    
-    api_files = list(root.rglob("*.py")) + list(root.rglob("*.js")) + list(root.rglob("*.ts"))
-    
-    for file_path in api_files:
-        if _should_skip(file_path):
+        if "docker" not in file_path.name.lower() and "kubernetes" not in file_path.name.lower() and "k8s" not in file_path.name.lower():
             continue
         
         try:
@@ -760,50 +686,105 @@ def _scan_api_security(root: Path) -> list[RawFinding]:
         except Exception:
             continue
         
-        # Detect Flask/FastAPI routes without authentication
-        if "flask" in content.lower() or "fastapi" in content.lower():
-            route_pattern = r'@(?:app|router)\.(?:route|get|post|put|delete)\(["\']([^"\']+)["\']'
-            auth_pattern = r'@(?:require_auth|authenticated|login_required|auth_required)'
-            
-            routes = re.finditer(route_pattern, content)
-            for route in routes:
-                route_line = content[:route.start()].count("\n") + 1
-                before_route = content[:route.start()]
-                if not re.search(auth_pattern, before_route[-500:]):
-                    findings.append(RawFinding(
-                        type="unauthenticated_api_endpoint",
-                        file=_relative_path(file_path, root),
-                        line=route_line,
-                        snippet=route.group(0),
-                        severity="high",
-                        confidence=0.7,
-                        metadata={"endpoint": route.group(1), "control_id": "SOC2-CC6.1"}
-                    ))
-        
-        # Detect API keys in URL parameters
-        api_key_in_url = r'(?:api_key|apikey|token|access_token)\s*=\s*["\']([^"\']+)["\']'
-        if re.search(api_key_in_url, content, re.IGNORECASE):
+        # Check for containers running as root
+        if re.search(r'runAsUser\s*:\s*0', content) or re.search(r'USER\s+0', content):
             findings.append(RawFinding(
-                type="api_key_in_url",
+                type="container_runs_as_root",
                 file=_relative_path(file_path, root),
                 line=None,
-                snippet="API key detected in URL parameter",
+                snippet="Container runs as root user",
                 severity="high",
+                confidence=0.9,
+            ))
+        
+        # Check for privilege escalation
+        if re.search(r'allowPrivilegeEscalation\s*:\s*true', content):
+            findings.append(RawFinding(
+                type="insecure_acl",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Privilege escalation enabled",
+                severity="high",
+                confidence=0.9,
+            ))
+        
+        # Check for Docker socket exposure
+        if re.search(r'/var/run/docker\.sock', content):
+            findings.append(RawFinding(
+                type="insecure_acl",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Docker socket exposed to container",
+                severity="high",
+                confidence=0.9,
+            ))
+        
+        # Check for missing security context
+        if "securityContext" not in content and "SecurityContext" not in content:
+            findings.append(RawFinding(
+                type="missing_security_context",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Missing security context in container configuration",
+                severity="medium",
                 confidence=0.8,
-                metadata={"control_id": "SOC2-CC6.2"}
+            ))
+    
+    return findings
+
+
+def _scan_api_security(root: Path) -> list[RawFinding]:
+    """Scan API code for security issues."""
+    findings: list[RawFinding] = []
+    
+    for file_path in _iter_files(root):
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for unauthenticated API routes
+        route_patterns = [
+            r'@app\.(get|post|put|delete|patch)\(',
+            r'@router\.(get|post|put|delete|patch)\(',
+            r'\.(get|post|put|delete|patch)\(',
+        ]
+        
+        has_auth_middleware = False
+        has_logging = False
+        
+        for line in lines:
+            # Check for authentication middleware/decorators
+            if re.search(r'@(require_auth|authenticated|login_required|auth)', line, re.IGNORECASE):
+                has_auth_middleware = True
+            if re.search(r'\.(log|logger|logging)', line, re.IGNORECASE):
+                has_logging = True
+        
+        # If auth middleware exists but no logging, flag it
+        if has_auth_middleware and not has_logging:
+            findings.append(RawFinding(
+                type="dpdp_missing_access_logging",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Authentication middleware found but no access logging",
+                severity="medium",
+                confidence=0.75,
             ))
     
     return findings
 
 
 def _scan_database_security(root: Path) -> list[RawFinding]:
-    """Detect database security compliance issues."""
+    """Scan database configuration and code for security issues."""
     findings: list[RawFinding] = []
     
-    sql_files = list(root.rglob("*.sql")) + list(root.rglob("*.py"))
-    
-    for file_path in sql_files:
-        if _should_skip(file_path):
+    for file_path in _iter_files(root):
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".sql"):
             continue
         
         try:
@@ -811,164 +792,1563 @@ def _scan_database_security(root: Path) -> list[RawFinding]:
         except Exception:
             continue
         
-        # Detect string concatenation in SQL queries (potential SQL injection)
-        sql_concat_patterns = [
-            r'["\'].*SELECT.*["\']\s*\+\s*[a-zA-Z_]+',
-            r'f["\'].*SELECT.*{.*}.*["\']',
-            r'["\'].*SELECT.*["\']\.format\(',
-        ]
+        # Check for empty passwords in connection strings
+        if re.search(r'password\s*=\s*["\']\s*["\']', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="hardcoded_secret",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Empty password in database connection",
+                severity="high",
+                confidence=0.95,
+            ))
         
-        for pattern in sql_concat_patterns:
-            matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
-            for match in matches:
-                line_no = content[:match.start()].count("\n") + 1
-                findings.append(RawFinding(
-                    type="potential_sql_injection",
-                    file=_relative_path(file_path, root),
-                    line=line_no,
-                    snippet=match.group(0)[:100],
-                    severity="high",
-                    confidence=0.75,
-                    metadata={"control_id": "SOC2-CC6.1", "vulnerability_type": "sql_injection"}
-                ))
+        # Check for plaintext passwords in connection strings
+        if re.search(r'password\s*=\s*["\'][^"\']{3,}["\']', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="hardcoded_secret",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Plaintext password in database connection string",
+                severity="high",
+                confidence=0.9,
+            ))
         
-        # Detect database connections without SSL/TLS
-        db_conn_patterns = [
-            r'postgresql://[^:]+:[^@]+@[^/]+/[^\s"\']+',
-            r'mysql://[^:]+:[^@]+@[^/]+/[^\s"\']+',
-        ]
-        
-        for pattern in db_conn_patterns:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                conn_string = match.group(0)
-                if "ssl" not in conn_string.lower() and "tls" not in conn_string.lower():
-                    line_no = content[:match.start()].count("\n") + 1
-                    findings.append(RawFinding(
-                        type="unencrypted_database_connection",
-                        file=_relative_path(file_path, root),
-                        line=line_no,
-                        snippet=conn_string,
-                        severity="high",
-                        confidence=0.9,
-                        metadata={"control_id": "ISO27001-A.10.1.1", "connection_type": "database"}
-                    ))
+        # Check for unencrypted database connections
+        if re.search(r'jdbc:mysql://', content, re.IGNORECASE) and 'useSSL=true' not in content:
+            findings.append(RawFinding(
+                type="unencrypted_database_connection",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Unencrypted database connection detected",
+                severity="high",
+                confidence=0.85,
+            ))
     
     return findings
 
 
 def _scan_cicd_security(root: Path) -> list[RawFinding]:
-    """Detect CI/CD pipeline security issues."""
+    """Scan CI/CD configuration files for security issues."""
     findings: list[RawFinding] = []
     
-    ci_files = list(root.rglob(".github/workflows/*.yml")) + \
-               list(root.rglob(".gitlab-ci.yml")) + \
-               list(root.rglob(".circleci/config.yml")) + \
-               list(root.rglob("Jenkinsfile"))
-    
-    for ci_file in ci_files:
-        if _should_skip(ci_file):
+    for file_path in _iter_files(root):
+        if file_path.name not in (".github", ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml", "circle.yml"):
             continue
         
         try:
-            content = ci_file.read_text(encoding="utf-8", errors="ignore")
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
         
-        # Detect secrets in CI/CD files
-        secret_patterns = [
-            r'password:\s*["\']([^"\']+)["\']',
-            r'api_key:\s*["\']([^"\']+)["\']',
-            r'secret:\s*["\']([^"\']+)["\']',
-        ]
-        
-        for pattern in secret_patterns:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                line_no = content[:match.start()].count("\n") + 1
-                findings.append(RawFinding(
-                    type="hardcoded_secret",
-                    file=_relative_path(ci_file, root),
-                    line=line_no,
-                    snippet=match.group(0),
-                    severity="critical",
-                    confidence=0.95,
-                    metadata={"context": "cicd", "control_id": "SOC2-CC6.2"}
-                ))
-        
-        # Detect missing artifact signing
-        if "docker build" in content.lower() or "docker push" in content.lower():
-            if "cosign" not in content.lower() and "notary" not in content.lower():
-                findings.append(RawFinding(
-                    type="unsigned_artifacts",
-                    file=_relative_path(ci_file, root),
-                    line=None,
-                    snippet="Docker images not signed in CI/CD pipeline",
-                    severity="medium",
-                    confidence=0.7,
-                    metadata={"control_id": "SOC2-CC6.1"}
-                ))
+        # Check for unsigned artifacts
+        if "sign" not in content.lower() and "gpg" not in content.lower():
+            findings.append(RawFinding(
+                type="unsigned_artifacts",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="CI/CD pipeline does not sign artifacts",
+                severity="medium",
+                confidence=0.7,
+            ))
     
     return findings
 
 
 def _scan_dependencies(root: Path) -> list[RawFinding]:
-    """Scan dependencies for compliance issues."""
+    """Scan dependency files for missing lock files."""
     findings: list[RawFinding] = []
     
-    import json
-    
-    # Check for dependency lock files
-    lock_files = {
-        "package-lock.json": "npm",
-        "yarn.lock": "yarn",
-        "requirements.txt": "pip",
-        "Pipfile.lock": "pipenv",
-        "poetry.lock": "poetry",
-        "Gemfile.lock": "ruby",
-        "go.sum": "go",
+    dependency_files = {
+        "requirements.txt": "requirements.lock",
+        "Gemfile": "Gemfile.lock",
+        "package.json": "package-lock.json",
+        "composer.json": "composer.lock",
+        "go.mod": "go.sum",
     }
     
-    for lock_file_name, package_manager in lock_files.items():
-        lock_file = root / lock_file_name
-        if not lock_file.exists():
+    for dep_file, lock_file in dependency_files.items():
+        dep_path = root / dep_file
+        lock_path = root / lock_file
+        
+        if dep_path.exists() and not lock_path.exists():
             findings.append(RawFinding(
                 type="missing_dependency_lock",
-                file=lock_file_name,
+                file=_relative_path(dep_path, root),
                 line=None,
-                snippet=f"Missing {lock_file_name} - dependencies not locked",
-                severity="medium",
-                confidence=0.9,
+                snippet=f"Missing {lock_file} for {dep_file}",
+                severity="low",
+                confidence=0.8,
                 metadata={
-                    "package_manager": package_manager,
-                    "control_id": "SOC2-CC6.1",
+                    "dependency_file": dep_file,
+                    "lock_file": lock_file,
+                    "control_id": "SOC2-CC8.1",
                 }
             ))
-    
-    # Check for outdated dependencies (compliance risk)
-    package_json = root / "package.json"
-    if package_json.exists():
-        try:
-            package_data = json.loads(package_json.read_text())
-            dependencies = package_data.get("dependencies", {})
-            
-            for dep, version in dependencies.items():
-                if version.startswith("^") or version.startswith("~") or version == "latest":
-                    findings.append(RawFinding(
-                        type="unpinned_dependency",
-                        file="package.json",
-                        line=None,
-                        snippet=f"{dep}: {version}",
-                        severity="low",
-                        confidence=0.8,
-                        metadata={
-                            "dependency": dep,
-                            "control_id": "SOC2-CC6.1",
-                        }
-                    ))
-        except Exception:
-            pass
     
     return findings
 
 
+def _scan_weak_encryption(root: Path) -> list[RawFinding]:
+    """Detect weak encryption algorithms and SSL/TLS misconfigurations."""
+    findings: list[RawFinding] = []
+    
+    # Weak cipher patterns (improved to catch actual usage)
+    weak_ciphers = {
+        "TripleDES": [
+            r"3DES",
+            r"TripleDES",
+            r"DES3",
+            r"DESede",
+            r"algorithms\.TripleDES",
+            r"cipher\.TripleDES",
+            r"TripleDES\(\)",
+        ],
+        "Blowfish": [
+            r"Blowfish",
+            r"blowfish",
+            r"algorithms\.Blowfish",
+            r"cipher\.Blowfish",
+            r"Blowfish\(\)",
+        ],
+        "ARC4": [
+            r"ARC4",
+            r"RC4",
+            r"arc4",
+            r"rc4",
+            r"algorithms\.ARC4",
+            r"cipher\.ARC4",
+            r"ARC4\(\)",
+        ],
+        "MD5": [r"MD5", r"md5", r"hashlib\.md5", r"MessageDigest\.getInstance\(['\"]MD5"],
+        "SHA1": [r"SHA1", r"sha1", r"hashlib\.sha1", r"MessageDigest\.getInstance\(['\"]SHA-1"],
+    }
+    
+    # SSL/TLS misconfiguration patterns (improved to catch more cases)
+    ssl_patterns = [
+        (r"check_hostname\s*=\s*False", "SSL hostname verification disabled"),
+        (r"verify\s*=\s*False", "SSL certificate verification disabled"),
+        (r"ssl\.create_default_context\(\)", "SSL context without hostname verification"),
+        (r"SSLContext\(\)", "SSL context without proper configuration"),
+        (r"ssl\._create_unverified_context\(\)", "Unverified SSL context"),
+        (r"ssl\.create_default_context\(\)\s*$", "SSL context without hostname verification (default)"),
+        (r"context\.check_hostname\s*=\s*False", "SSL hostname verification disabled"),
+        (r"context\.verify_mode\s*=\s*ssl\.CERT_NONE", "SSL certificate verification disabled"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on code files
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for weak ciphers
+        for cipher_name, patterns in weak_ciphers.items():
+            for pattern in patterns:
+                for line_no, line in enumerate(lines, start=1):
+                    if re.search(pattern, line, re.IGNORECASE):
+                        # Skip if it's in a comment or test file
+                        stripped = line.strip()
+                        if stripped.startswith(('//', '/*', '*', '#', '--')):
+                            continue
+                        if "test" in file_path.name.lower():
+                            continue
+                        
+                        findings.append(RawFinding(
+                            type="weak_encryption",
+                            file=_relative_path(file_path, root),
+                            line=line_no,
+                            snippet=line.strip()[:200],
+                            severity="high",
+                            confidence=0.9,
+                            metadata={"weak_cipher": cipher_name, "control_id": "GDPR-Article-32"}
+                        ))
+                        break  # Only report once per file per cipher
+        
+        # Check for SSL/TLS misconfigurations
+        for pattern, description in ssl_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    # Skip if it's in a comment
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="weak_encryption",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "control_id": "GDPR-Article-32"}
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_injection_vulnerabilities(root: Path) -> list[RawFinding]:
+    """Detect SQL injection and NoSQL injection vulnerabilities."""
+    findings: list[RawFinding] = []
+    
+    # SQL injection patterns
+    sql_injection_patterns = [
+        (r'["\'].*SELECT.*["\']\s*\+\s*[a-zA-Z_]+', "String concatenation in SQL query"),
+        (r'f["\'].*SELECT.*{.*}.*["\']', "f-string with SQL query"),
+        (r'["\'].*SELECT.*["\']\.format\(', "String format in SQL query"),
+        (r'execute\s*\(\s*["\'].*%(?:s|d).*["\']', "String formatting in SQL execute"),
+    ]
+    
+    # NoSQL injection patterns (improved for Java, Python, JavaScript)
+    nosql_injection_patterns = [
+        # MongoDB $where with string concatenation
+        (r'\$where\s*[:=]\s*["\'].*\+.*["\']', "String concatenation in MongoDB $where"),
+        (r'find\s*\(\s*\{[^}]*\$where[^}]*\+', "String concatenation in MongoDB find with $where"),
+        # Java: query.put("field", userInput) or query.put("field", userInput + "...")
+        (r'\.put\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+[^)]*\+', "String concatenation in MongoDB query.put (NoSQL injection)"),
+        # Java: BasicDBObject with string concatenation
+        (r'BasicDBObject\s*\([^)]*\+', "String concatenation in BasicDBObject (NoSQL injection)"),
+        # Java: Query with string concatenation
+        (r'Query\s*\([^)]*\+', "String concatenation in Query (NoSQL injection)"),
+        # General: eval with string concatenation
+        (r'eval\s*\(\s*["\'].*\+', "String concatenation in eval (NoSQL injection risk)"),
+        # MongoDB find with string concatenation in query
+        (r'\.find\s*\(\s*["\'].*\+.*["\']', "String concatenation in MongoDB find query"),
+        # User input directly in query object
+        (r'\.find\s*\(\s*\{[^}]*[a-zA-Z_]+[^}]*\+', "String concatenation in MongoDB find query object"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on code files
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for SQL injection
+        for pattern, description in sql_injection_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE | re.DOTALL):
+                    # Skip if it's in a comment
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="potential_sql_injection",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.75,
+                        metadata={"issue": description, "control_id": "SOC2-CC6.1", "vulnerability_type": "sql_injection"}
+                    ))
+                    break  # Only report once per file per pattern
+        
+        # Check for NoSQL injection
+        for pattern, description in nosql_injection_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    # Skip if it's in a comment
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="potential_sql_injection",  # Use same type for now
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.75,
+                        metadata={"issue": description, "control_id": "SOC2-CC6.1", "vulnerability_type": "nosql_injection"}
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_weak_authentication(root: Path) -> list[RawFinding]:
+    """Detect weak authentication mechanisms (plaintext passwords, no hashing)."""
+    findings: list[RawFinding] = []
+    
+    # Weak authentication patterns
+    weak_auth_patterns = [
+        (r'password\s*==\s*', "Plaintext password comparison"),
+        (r'password\s*=\s*==', "Plaintext password comparison"),
+        (r'\.password\s*==\s*', "Plaintext password comparison"),
+        (r'NoOpPasswordEncoder', "NoOpPasswordEncoder - passwords not hashed"),
+        (r'NoOpPasswordEncoder\.getInstance\(\)', "NoOpPasswordEncoder.getInstance() - passwords not hashed"),
+        (r'passwordEncoder\s*=\s*NoOpPasswordEncoder', "NoOpPasswordEncoder - passwords not hashed"),
+        (r'\.passwordEncoder\(NoOpPasswordEncoder', "NoOpPasswordEncoder configured - passwords not hashed"),
+        (r'String\s+password', "Password stored as String (plaintext)"),
+        (r'password\s*:\s*String', "Password stored as String (plaintext)"),
+        # Database model plaintext passwords
+        (r'password\s*=\s*Column\(String', "Password column as String (plaintext) in database model"),
+        (r'password\s*=\s*db\.String', "Password field as String (plaintext) in database model"),
+        (r'password\s*=\s*models\.CharField', "Password field as CharField (plaintext) in database model"),
+        # Flask SECRET_KEY detection
+        (r'SECRET_KEY\s*=\s*["\']([^"\']{10,})["\']', "Flask SECRET_KEY hardcoded"),
+        (r'app\.config\[["\']SECRET_KEY["\']\]\s*=\s*["\']([^"\']{10,})["\']', "Flask SECRET_KEY hardcoded in config"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on code files
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for weak authentication patterns
+        for pattern, description in weak_auth_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    # Skip if it's in a comment or test file
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    if "test" in file_path.name.lower():
+                        continue
+                    
+                    # For Flask SECRET_KEY, check if it's a placeholder
+                    if "SECRET_KEY" in description:
+                        secret_value = match.group(1) if match.lastindex else ""
+                        if secret_value:
+                            secret_upper = secret_value.upper()
+                            if secret_upper in ('CHANGE-ME', 'REPLACE_ME', 'PLACEHOLDER', 'EXAMPLE', 'YOUR_SECRET_KEY') or 'KEEP IT SECRET' in secret_upper:
+                                continue
+                    
+                    # Check if hashing is used nearby (context check) - but not for SECRET_KEY
+                    if "SECRET_KEY" not in description:
+                        context_lines = lines[max(0, line_no-5):min(len(lines), line_no+5)]
+                        context = '\n'.join(context_lines).lower()
+                        hashing_functions = ["hash", "bcrypt", "scrypt", "argon2", "pbkdf2", "sha256", "sha512"]
+                        if any(hf in context for hf in hashing_functions):
+                            continue  # Skip if hashing is used nearby
+                    
+                    findings.append(RawFinding(
+                        type="weak_authentication" if "SECRET_KEY" not in description else "hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high" if "SECRET_KEY" in description else "high",
+                        confidence=0.9 if "SECRET_KEY" in description else 0.8,
+                        metadata={"issue": description, "control_id": "SOC2-CC6.1" if "SECRET_KEY" not in description else "SOC2-CC6.2"}
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_missing_logging(root: Path) -> list[RawFinding]:
+    """Detect missing authentication and security event logging."""
+    findings: list[RawFinding] = []
+    
+    # Patterns that indicate authentication/login code
+    auth_patterns = [
+        r'password\s*==\s*',
+        r'password\s*=\s*==',
+        r'\.password\s*==\s*',
+        r'login\s*\(',
+        r'authenticate\s*\(',
+        r'checkPassword\s*\(',
+        r'verifyPassword\s*\(',
+        r'system\s*\(',
+        r'exec\s*\(',
+        r'eval\s*\(',
+    ]
+    
+    # Patterns that indicate logging
+    logging_patterns = [
+        r'\.log\s*\(',
+        r'logger\s*\.',
+        r'logging\s*\.',
+        r'console\s*\.(log|error|warn)',
+        r'print\s*\(',
+        r'Log\.',
+        r'Logger\.',
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on code files
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for authentication code without logging
+        for line_no, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            
+            # Skip comments
+            if stripped.startswith(('//', '/*', '*', '#', '--')):
+                continue
+            
+            # Check if line contains authentication pattern
+            has_auth = any(re.search(pattern, line, re.IGNORECASE) for pattern in auth_patterns)
+            
+            if has_auth:
+                # Check if there's logging in the surrounding context (10 lines before/after)
+                context_start = max(0, line_no - 10)
+                context_end = min(len(lines), line_no + 10)
+                context = '\n'.join(lines[context_start:context_end])
+                
+                # Check if logging exists in context
+                has_logging = any(re.search(pattern, context, re.IGNORECASE) for pattern in logging_patterns)
+                
+                if not has_logging:
+                    # Determine the type of auth code
+                    auth_type = "authentication"
+                    if 'system(' in line or 'exec(' in line or 'eval(' in line:
+                        auth_type = "command execution"
+                    
+                    findings.append(RawFinding(
+                        type="missing_logging",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.75,
+                        metadata={
+                            "issue": f"Missing security event logging for {auth_type}",
+                            "control_id": "SOC2-CC7.2",
+                            "auth_type": auth_type
+                        }
+                    ))
+                    break  # Only report once per file
+    
+    return findings
+
+
+def _scan_dpdp_compliance(root: Path) -> list[RawFinding]:
+    """Scan for DPDP-specific compliance requirements."""
+    findings: list[RawFinding] = []
+    
+    # Skip educational/vulnerable code repositories
+    if _is_educational_code(root):
+        return findings
+    
+    # Only scan web applications
+    if not _is_web_application(root):
+        return findings
+    
+    # Check for consent handling
+    consent_found = (
+        detect_consent_via_dependencies(root) or
+        detect_consent_via_api_routes(root) or
+        detect_consent_via_ast(root) or
+        detect_consent_via_database_schema(root)
+    )
+    
+    if not consent_found:
+        findings.append(RawFinding(
+            type="dpdp_missing_consent",
+            file=".",
+            line=None,
+            snippet="No consent handling mechanisms found",
+            severity="high",
+            confidence=0.7,
+        ))
+    
+    # Check for access logging
+    access_logging_found = (
+        detect_access_logging_via_ast(root) or
+        detect_access_logging_via_config(root)
+    )
+    
+    if not access_logging_found:
+        findings.append(RawFinding(
+            type="dpdp_missing_access_logging",
+            file=".",
+            line=None,
+            snippet="No access logging for personal data found",
+            severity="medium",
+            confidence=0.7,
+        ))
+    
+    # Check for data retention
+    retention_found = detect_retention_via_config(root)
+    if not retention_found:
+        findings.append(RawFinding(
+            type="dpdp_missing_retention",
+            file=".",
+            line=None,
+            snippet="No data retention policies found",
+            severity="medium",
+            confidence=0.7,
+        ))
+    
+    # Check for right to erasure
+    erasure_found = (
+        detect_right_to_erasure_via_api_routes(root) or
+        detect_right_to_erasure_via_ast(root)
+    )
+    if not erasure_found:
+        findings.append(RawFinding(
+            type="dpdp_missing_right_to_erasure",
+            file=".",
+            line=None,
+            snippet="No right to erasure mechanisms found",
+            severity="medium",
+            confidence=0.7,
+        ))
+    
+    # Check for data portability
+    portability_found = (
+        detect_data_portability_via_api_routes(root) or
+        detect_data_portability_via_ast(root)
+    )
+    if not portability_found:
+        findings.append(RawFinding(
+            type="dpdp_missing_data_portability",
+            file=".",
+            line=None,
+            snippet="No data portability mechanisms found",
+            severity="medium",
+            confidence=0.7,
+        ))
+    
+    return findings
+
+
+def _scan_gdpr_compliance(root: Path) -> list[RawFinding]:
+    """Scan for GDPR-specific compliance requirements."""
+    findings: list[RawFinding] = []
+    
+    # Skip educational/vulnerable code repositories
+    if _is_educational_code(root):
+        return findings
+    
+    # Only scan web applications
+    if not _is_web_application(root):
+        return findings
+    
+    # Check for encryption
+    encryption_found = (
+        detect_encryption_via_dependencies(root) or
+        detect_encryption_via_config(root)
+    )
+    if not encryption_found:
+        findings.append(RawFinding(
+            type="gdpr_missing_encryption",
+            file=".",
+            line=None,
+            snippet="No encryption mechanisms found",
+            severity="high",
+            confidence=0.7,
+        ))
+    
+    return findings
+
+
+def _is_web_application(root: Path) -> bool:
+    """Determine if a project is a web application."""
+    # Check for web framework indicators
+    framework_indicators = [
+        "flask", "django", "fastapi", "express", "react", "vue", "angular",
+        "spring", "rails", "sinatra", "laravel", "symfony", "asp.net"
+    ]
+    
+    # Check package.json, requirements.txt, etc.
+    dependency_files = ["package.json", "requirements.txt", "pom.xml", "build.gradle", "Gemfile", "composer.json"]
+    
+    for dep_file in dependency_files:
+        dep_path = root / dep_file
+        if dep_path.exists():
+            try:
+                content = dep_path.read_text(encoding="utf-8", errors="ignore").lower()
+                if any(indicator in content for indicator in framework_indicators):
+                    return True
+            except Exception:
+                pass
+    
+    # Check for common web application files
+    web_files = ["app.py", "main.py", "server.js", "index.js", "app.js", "routes.py", "views.py"]
+    for web_file in web_files:
+        if (root / web_file).exists():
+            return True
+    
+    # Check for user data handling patterns
+    for file_path in _iter_files(root):
+        if file_path.suffix in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb"):
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+                if any(pattern in content for pattern in ["user", "customer", "email", "password", "login", "register"]):
+                    return True
+            except Exception:
+                pass
+    
+    return False
+
+
+def _scan_missing_logging(root: Path) -> list[RawFinding]:
+    """Detect missing authentication and security event logging."""
+    findings: list[RawFinding] = []
+    
+    # Patterns that indicate authentication/login code
+    auth_patterns = [
+        r'password\s*==\s*',
+        r'password\s*=\s*==',
+        r'\.password\s*==\s*',
+        r'login\s*\(',
+        r'authenticate\s*\(',
+        r'checkPassword\s*\(',
+        r'verifyPassword\s*\(',
+        r'system\s*\(',
+        r'exec\s*\(',
+        r'eval\s*\(',
+    ]
+    
+    # Patterns that indicate logging
+    logging_patterns = [
+        r'\.log\s*\(',
+        r'logger\s*\.',
+        r'logging\s*\.',
+        r'console\s*\.(log|error|warn)',
+        r'print\s*\(',
+        r'Log\.',
+        r'Logger\.',
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on code files
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for authentication code without logging
+        for line_no, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            
+            # Skip comments
+            if stripped.startswith(('//', '/*', '*', '#', '--')):
+                continue
+            
+            # Check if line contains authentication pattern
+            has_auth = any(re.search(pattern, line, re.IGNORECASE) for pattern in auth_patterns)
+            
+            if has_auth:
+                # Check if there's logging in the surrounding context (10 lines before/after)
+                context_start = max(0, line_no - 10)
+                context_end = min(len(lines), line_no + 10)
+                context = '\n'.join(lines[context_start:context_end])
+                
+                # Check if logging exists in context
+                has_logging = any(re.search(pattern, context, re.IGNORECASE) for pattern in logging_patterns)
+                
+                if not has_logging:
+                    # Determine the type of auth code
+                    auth_type = "authentication"
+                    if 'system(' in line or 'exec(' in line or 'eval(' in line:
+                        auth_type = "command execution"
+                    
+                    findings.append(RawFinding(
+                        type="missing_logging",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.75,
+                        metadata={
+                            "issue": f"Missing security event logging for {auth_type}",
+                            "control_id": "SOC2-CC7.2",
+                            "auth_type": auth_type
+                        }
+                    ))
+                    break  # Only report once per file
+    
+    return findings
+
+
+def _scan_command_injection(root: Path) -> list[RawFinding]:
+    """Detect command injection vulnerabilities (system(), exec(), eval() with user input)."""
+    findings: list[RawFinding] = []
+    
+    # Command injection patterns
+    command_injection_patterns = [
+        # PHP: system($_GET['cmd']), system($_POST['cmd']), system($_REQUEST['cmd'])
+        (r'system\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via system() with user input (PHP)"),
+        (r'exec\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via exec() with user input (PHP)"),
+        (r'shell_exec\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via shell_exec() with user input (PHP)"),
+        (r'passthru\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via passthru() with user input (PHP)"),
+        (r'eval\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Code injection via eval() with user input (PHP)"),
+        # Python: os.system(user_input), subprocess.call(user_input)
+        (r'os\.system\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via os.system() (Python)"),
+        (r'subprocess\.(call|run|Popen)\s*\(\s*[a-zA-Z_]+[^)]*shell\s*=\s*True', "Command injection via subprocess with shell=True (Python)"),
+        # Node.js: child_process.exec(user_input)
+        (r'child_process\.(exec|spawn)\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via child_process (Node.js)"),
+        # General: eval() with user input
+        (r'eval\s*\(\s*[a-zA-Z_]+[^)]*\)', "Code injection via eval() with variable"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for command injection
+        for pattern, description in command_injection_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    # Skip comments
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    # Check if it's in a test file (lower confidence)
+                    is_test = "test" in file_path.name.lower()
+                    
+                    findings.append(RawFinding(
+                        type="potential_sql_injection",  # Use same type for injection vulnerabilities
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.9 if not is_test else 0.6,
+                        metadata={"issue": description, "vulnerability": "command_injection", "control_id": "SOC2-CC6.1"}
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
+    """Detect Cross-Site Scripting (XSS) vulnerabilities (unsanitized user input in output)."""
+    findings: list[RawFinding] = []
+    
+    # XSS patterns - unsanitized user input in output
+    xss_patterns = [
+        # PHP: echo $_GET['input'], echo $_POST['input'], print $_REQUEST['input']
+        (r'echo\s+\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct echo of user input without sanitization (PHP)"),
+        (r'print\s+\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct print of user input without sanitization (PHP)"),
+        (r'<\?=\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct output of user input in PHP short tag"),
+        # Python: print(user_input), {{ user_input }} (templates)
+        (r'print\s*\(\s*[a-zA-Z_]+[^)]*\)', "XSS: Direct print of variable (Python)"),
+        (r'\{\{\s*[a-zA-Z_]+\s*\}\}', "XSS: Template variable without escaping (Jinja2/Django)"),
+        # JavaScript: document.write(user_input), innerHTML = user_input
+        (r'document\.write\s*\(\s*[a-zA-Z_]+', "XSS: Direct document.write() with variable (JavaScript)"),
+        (r'\.innerHTML\s*=\s*[a-zA-Z_]+', "XSS: Direct innerHTML assignment with variable (JavaScript)"),
+        (r'\.outerHTML\s*=\s*[a-zA-Z_]+', "XSS: Direct outerHTML assignment with variable (JavaScript)"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb", ".html", ".htm", ".jsp", ".erb"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for XSS vulnerabilities
+        for pattern, description in xss_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    # Skip comments
+                    if stripped.startswith(('//', '/*', '*', '#', '--', '<!--')):
+                        continue
+                    # Check if sanitization exists nearby
+                    context_start = max(0, line_no - 3)
+                    context_end = min(len(lines), line_no + 3)
+                    context = '\n'.join(lines[context_start:context_end]).lower()
+                    # Skip if sanitization functions are used
+                    sanitization_functions = ['htmlspecialchars', 'htmlentities', 'escape', 'sanitize', 'xss', 'filter', 'strip_tags']
+                    if any(sf in context for sf in sanitization_functions):
+                        continue
+                    
+                    is_test = "test" in file_path.name.lower()
+                    
+                    findings.append(RawFinding(
+                        type="potential_sql_injection",  # Use same type for injection vulnerabilities
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85 if not is_test else 0.6,
+                        metadata={"issue": description, "vulnerability": "xss", "control_id": "SOC2-CC6.1"}
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _is_educational_code(root: Path) -> bool:
+    """Determine if repository is educational/vulnerable code (not production)."""
+    # Check for common educational repository indicators
+    educational_indicators = [
+        "vulnerable", "vuln", "demo", "example", "sample", "test", "tutorial",
+        "educational", "learning", "practice", "dvwa", "mutillidae", "webgoat",
+        "broken", "snippet", "snippets"
+    ]
+    
+    repo_name = root.name.lower()
+    if any(indicator in repo_name for indicator in educational_indicators):
+        return True
+    
+    # Check for README indicating educational purpose
+    readme_files = ["README.md", "README.txt", "README", "readme.md"]
+    for readme_file in readme_files:
+        readme_path = root / readme_file
+        if readme_path.exists():
+            try:
+                readme_content = readme_path.read_text(encoding="utf-8", errors="ignore").lower()
+                educational_keywords = [
+                    "educational", "learning", "tutorial", "example", "demo",
+                    "vulnerable", "intentionally", "for educational purposes",
+                    "practice", "test", "not for production"
+                ]
+                if any(keyword in readme_content for keyword in educational_keywords):
+                    return True
+            except Exception:
+                pass
+    
+    return False
+
+
+# ============================================================================
+# INDUSTRY-GRADE SECURITY DETECTIONS
+# ============================================================================
+
+def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
+    """Detect advanced secrets management issues (JWT secrets, OAuth, session secrets, encryption keys)."""
+    findings: list[RawFinding] = []
+    
+    # JWT secret patterns
+    jwt_patterns = [
+        (r'JWT_SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "JWT secret in code"),
+        (r'jwt\.encode\([^)]*secret[^)]*["\']([^"\']{10,})["\']', "JWT secret in encode call"),
+        (r'jwtSecret\s*[:=]\s*["\']([^"\']{10,})["\']', "JWT secret variable"),
+        (r'secret_key\s*[:=]\s*["\']([^"\']{10,})["\']', "JWT/Flask secret key"),
+    ]
+    
+    # OAuth client secrets
+    oauth_patterns = [
+        (r'client_secret\s*[:=]\s*["\']([^"\']{10,})["\']', "OAuth client secret"),
+        (r'CLIENT_SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "OAuth client secret (env var)"),
+        (r'oauth.*secret\s*[:=]\s*["\']([^"\']{10,})["\']', "OAuth secret"),
+    ]
+    
+    # Session secrets
+    session_patterns = [
+        (r'SESSION_SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "Session secret"),
+        (r'session.*secret\s*[:=]\s*["\']([^"\']{10,})["\']', "Session secret variable"),
+        (r'cookie.*secret\s*[:=]\s*["\']([^"\']{10,})["\']', "Cookie secret"),
+    ]
+    
+    # Encryption keys
+    encryption_key_patterns = [
+        (r'ENCRYPTION_KEY\s*[:=]\s*["\']([^"\']{16,})["\']', "Encryption key"),
+        (r'encryption_key\s*[:=]\s*["\']([^"\']{16,})["\']', "Encryption key variable"),
+        (r'AES.*key\s*[:=]\s*["\']([^"\']{16,})["\']', "AES encryption key"),
+    ]
+    
+    # API keys in URLs/headers
+    api_key_in_url_patterns = [
+        (r'api[_-]?key\s*=\s*[^&\s]+', "API key in URL parameter"),
+        (r'\?.*api[_-]?key\s*=', "API key in query string"),
+        (r'api[_-]?key["\']?\s*:\s*["\']?[^"\']+["\']?', "API key in object/header"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml", ".json", ".env"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check JWT secrets
+        for pattern, description in jwt_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    if 'example' in line.lower() or 'placeholder' in line.lower():
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.9,
+                        metadata={"secret_type": "JWT_SECRET", "issue": description}
+                    ))
+                    break
+        
+        # Check OAuth secrets
+        for pattern, description in oauth_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.9,
+                        metadata={"secret_type": "OAUTH_SECRET", "issue": description}
+                    ))
+                    break
+        
+        # Check session secrets
+        for pattern, description in session_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"secret_type": "SESSION_SECRET", "issue": description}
+                    ))
+                    break
+        
+        # Check encryption keys
+        for pattern, description in encryption_key_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.95,
+                        metadata={"secret_type": "ENCRYPTION_KEY", "issue": description}
+                    ))
+                    break
+        
+        # Check API keys in URLs
+        for pattern, description in api_key_in_url_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="api_key_in_url",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.8,
+                        metadata={"issue": description}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_authentication_security(root: Path) -> list[RawFinding]:
+    """Detect authentication and authorization security issues."""
+    findings: list[RawFinding] = []
+    
+    # Missing MFA patterns
+    mfa_patterns = [
+        (r'@require_auth|@login_required|@authenticated', "Authentication required but no MFA check"),
+    ]
+    
+    # Weak session management
+    session_patterns = [
+        (r'session\.timeout\s*=\s*0', "Session timeout disabled"),
+        (r'session\.cookie\.secure\s*=\s*False', "Session cookie not secure"),
+        (r'session\.cookie\.httponly\s*=\s*False', "Session cookie not HttpOnly"),
+        (r'session\.cookie\.samesite\s*=\s*["\']?None["\']?', "Session cookie SameSite=None (insecure)"),
+    ]
+    
+    # JWT without expiration
+    jwt_patterns = [
+        (r'jwt\.encode\([^)]*exp\s*=\s*None', "JWT without expiration"),
+        (r'jwt\.encode\([^)]*\)(?!.*exp)', "JWT encode without exp parameter"),
+    ]
+    
+    # Missing CSRF protection
+    csrf_patterns = [
+        (r'@app\.(post|put|delete|patch)\([^)]*\)(?!.*csrf)', "API endpoint without CSRF protection"),
+        (r'csrf_protect\s*=\s*False', "CSRF protection disabled"),
+    ]
+    
+    # Missing rate limiting
+    rate_limit_patterns = [
+        (r'@app\.(post|put)\([^)]*["\']/login["\']', "Login endpoint without rate limiting"),
+        (r'@app\.(post|put)\([^)]*["\']/auth["\']', "Auth endpoint without rate limiting"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for weak session management
+        for pattern, description in session_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="weak_authentication",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "control_id": "SOC2-CC6.1"}
+                    ))
+                    break
+        
+        # Check for JWT without expiration
+        for pattern, description in jwt_patterns:
+            if re.search(pattern, content, re.IGNORECASE | re.MULTILINE | re.DOTALL):
+                findings.append(RawFinding(
+                    type="weak_authentication",
+                    file=_relative_path(file_path, root),
+                    line=None,
+                    snippet="JWT token without expiration",
+                    severity="high",
+                    confidence=0.8,
+                    metadata={"issue": description, "control_id": "SOC2-CC6.1"}
+                ))
+                break
+        
+        # Check for missing CSRF protection
+        for pattern, description in csrf_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                findings.append(RawFinding(
+                    type="weak_authentication",
+                    file=_relative_path(file_path, root),
+                    line=None,
+                    snippet="Missing CSRF protection",
+                    severity="medium",
+                    confidence=0.75,
+                    metadata={"issue": description, "control_id": "SOC2-CC6.1"}
+                ))
+                break
+    
+    return findings
+
+
+def _scan_access_control_issues(root: Path) -> list[RawFinding]:
+    """Detect access control and authorization issues."""
+    findings: list[RawFinding] = []
+    
+    # Path traversal patterns
+    path_traversal_patterns = [
+        (r'open\([^)]*\.\./', "Path traversal in file open"),
+        (r'readFile\([^)]*\.\./', "Path traversal in readFile"),
+        (r'File\.ReadAllText\([^)]*\.\./', "Path traversal in ReadAllText"),
+        (r'\.\./.*\.\./', "Multiple path traversal sequences"),
+    ]
+    
+    # Missing input validation
+    input_validation_patterns = [
+        (r'request\.(get|post|args)\[[^]]+\]', "Direct user input without validation"),
+        (r'request\.(query|params|body)\[', "Direct request parameter access"),
+        (r'\$_GET\[|\$_POST\[|\$_REQUEST\[', "Direct superglobal access (PHP)"),
+    ]
+    
+    # IDOR (Insecure Direct Object Reference)
+    idor_patterns = [
+        (r'/users/\{user_id\}|/users/\{id\}', "User ID in URL without authorization check"),
+        (r'/api/users/\d+', "Direct user ID access in API"),
+    ]
+    
+    # Missing authorization checks
+    authz_patterns = [
+        (r'if\s*\(.*user.*\)\s*\{[^}]*delete|update|modify', "Operation without role check"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for path traversal
+        for pattern, description in path_traversal_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    # Check if path is sanitized
+                    if 'os.path.join' in line or 'path.join' in line or 'realpath' in line or 'abspath' in line:
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_acl",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.8,
+                        metadata={"issue": description, "vulnerability": "path_traversal"}
+                    ))
+                    break
+        
+        # Check for missing input validation
+        for pattern, description in input_validation_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    # Check if validation exists nearby
+                    context = '\n'.join(lines[max(0, line_no-3):min(len(lines), line_no+3)])
+                    if any(v in context.lower() for v in ['validate', 'sanitize', 'escape', 'filter']):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_acl",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.7,
+                        metadata={"issue": description, "vulnerability": "missing_input_validation"}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_logging_security(root: Path) -> list[RawFinding]:
+    """Detect logging and audit trail security issues."""
+    findings: list[RawFinding] = []
+    
+    # Log injection patterns
+    log_injection_patterns = [
+        (r'log\.(info|error|warn|debug)\([^)]*\+.*user', "String concatenation in log (log injection risk)"),
+        (r'logger\.(info|error|warn)\([^)]*\+', "String concatenation in logger"),
+        (r'console\.log\([^)]*\+.*request', "String concatenation in console.log"),
+    ]
+    
+    # Sensitive data in logs
+    sensitive_log_patterns = [
+        (r'log\.(info|error|warn)\([^)]*password', "Password in log statement"),
+        (r'logger\.(info|error|warn)\([^)]*password', "Password in logger statement"),
+        (r'console\.log\([^)]*password', "Password in console.log"),
+        (r'log\.(info|error|warn)\([^)]*token', "Token in log statement"),
+        (r'log\.(info|error|warn)\([^)]*secret', "Secret in log statement"),
+        (r'log\.(info|error|warn)\([^)]*credit.*card|cc[_-]?number', "Credit card in log statement"),
+        (r'log\.(info|error|warn)\([^)]*ssn|social.*security', "SSN in log statement"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for log injection
+        for pattern, description in log_injection_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="missing_logging",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.75,
+                        metadata={"issue": description, "vulnerability": "log_injection", "control_id": "SOC2-CC7.2"}
+                    ))
+                    break
+        
+        # Check for sensitive data in logs
+        for pattern, description in sensitive_log_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="missing_logging",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "vulnerability": "sensitive_data_in_logs", "control_id": "SOC2-CC7.2"}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_encryption_security(root: Path) -> list[RawFinding]:
+    """Detect encryption and data handling security issues."""
+    findings: list[RawFinding] = []
+    
+    # Missing encryption at rest
+    encryption_at_rest_patterns = [
+        (r'storage.*encryption\s*=\s*False', "Storage encryption disabled"),
+        (r'encrypt.*at.*rest\s*=\s*False', "Encryption at rest disabled"),
+    ]
+    
+    # Insecure key management
+    key_management_patterns = [
+        (r'key.*rotation\s*=\s*False', "Key rotation disabled"),
+        (r'key.*rotation\s*=\s*None', "Key rotation not configured"),
+    ]
+    
+    # PII in error messages
+    pii_patterns = [
+        (r'raise.*Exception\([^)]*email', "Email in exception message"),
+        (r'throw.*Error\([^)]*email', "Email in error message"),
+        (r'error\([^)]*password', "Password in error message"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for missing encryption at rest
+        for pattern, description in encryption_at_rest_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="weak_encryption",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "control_id": "GDPR-Article-32"}
+                    ))
+                    break
+        
+        # Check for PII in error messages
+        for pattern, description in pii_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="weak_encryption",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.75,
+                        metadata={"issue": description, "vulnerability": "pii_in_errors", "control_id": "GDPR-Article-32"}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_insecure_configurations(root: Path) -> list[RawFinding]:
+    """Detect insecure configuration issues."""
+    findings: list[RawFinding] = []
+    
+    # Debug mode in production
+    debug_patterns = [
+        (r'DEBUG\s*=\s*True', "Debug mode enabled"),
+        (r'debug\s*=\s*true', "Debug mode enabled (lowercase)"),
+        (r'environment\s*=\s*["\']production["\'].*debug\s*=\s*True', "Debug mode in production"),
+    ]
+    
+    # Missing security headers
+    security_header_patterns = [
+        (r'X-Frame-Options', "Missing X-Frame-Options header"),
+        (r'X-Content-Type-Options', "Missing X-Content-Type-Options header"),
+        (r'Strict-Transport-Security', "Missing HSTS header"),
+        (r'Content-Security-Policy', "Missing CSP header"),
+    ]
+    
+    # Insecure CORS
+    cors_patterns = [
+        (r'cors.*origin\s*=\s*["\']\*["\']', "CORS allows all origins"),
+        (r'Access-Control-Allow-Origin\s*:\s*\*', "CORS header allows all origins"),
+    ]
+    
+    # Insecure cookies
+    cookie_patterns = [
+        (r'cookie.*secure\s*=\s*False', "Cookie not marked as secure"),
+        (r'cookie.*httponly\s*=\s*False', "Cookie not marked as HttpOnly"),
+        (r'session.*cookie.*secure\s*=\s*False', "Session cookie not secure"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml", ".json", ".conf", ".ini"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for debug mode
+        for pattern, description in debug_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    if 'test' in file_path.name.lower():
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_acl",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.9,
+                        metadata={"issue": description, "vulnerability": "debug_mode_enabled"}
+                    ))
+                    break
+        
+        # Check for insecure CORS
+        for pattern, description in cors_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_acl",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.8,
+                        metadata={"issue": description, "vulnerability": "insecure_cors"}
+                    ))
+                    break
+        
+        # Check for insecure cookies
+        for pattern, description in cookie_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="weak_authentication",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "vulnerability": "insecure_cookies"}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_supply_chain_security(root: Path) -> list[RawFinding]:
+    """Detect CI/CD and supply chain security issues."""
+    findings: list[RawFinding] = []
+    
+    # CI/CD secrets in code
+    cicd_secret_patterns = [
+        (r'GITHUB_TOKEN\s*[:=]\s*["\']([^"\']{10,})["\']', "GitHub token in code"),
+        (r'CI.*SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "CI secret in code"),
+        (r'pipeline.*secret\s*[:=]\s*["\']([^"\']{10,})["\']', "Pipeline secret in code"),
+    ]
+    
+    # Missing dependency scanning
+    dependency_scan_patterns = [
+        (r'snyk|dependabot|safety|bandit', "Dependency scanning tool found"),
+    ]
+    
+    # Insecure package registries
+    registry_patterns = [
+        (r'registry\s*=\s*["\']http://', "Insecure package registry (HTTP)"),
+        (r'npm.*registry.*http://', "Insecure npm registry"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Check CI/CD files
+        if file_path.name not in (".github", ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml", "circle.yml", "azure-pipelines.yml", ".circleci"):
+            if file_path.suffix not in (".yaml", ".yml", ".json", ".py", ".js", ".ts"):
+                continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Check for CI/CD secrets
+        for pattern, description in cicd_secret_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.95,
+                        metadata={"secret_type": "CI_CD_SECRET", "issue": description}
+                    ))
+                    break
+        
+        # Check for insecure package registries
+        for pattern, description in registry_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_acl",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.8,
+                        metadata={"issue": description, "vulnerability": "insecure_registry"}
+                    ))
+                    break
+    
+    return findings

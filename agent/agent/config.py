@@ -71,7 +71,7 @@ EXCLUDED_DIRS = {
 }
 EXCLUDED_FILENAMES = {"aegis-report.json", "report.json", "*.pyc", "*.pyo"}
 IAC_EXTENSIONS = {".tf", ".tf.json", ".json", ".yaml", ".yml"}
-SECRET_TEXT_EXTENSIONS = {".env", ".ini", ".cfg", ".txt", ".json", ".yaml", ".yml"}
+SECRET_TEXT_EXTENSIONS = {".env", ".ini", ".cfg", ".conf", ".txt", ".json", ".yaml", ".yml", ".properties"}
 
 AGENT_VERSION = "kratos-comply-agent-1.0.0"
 

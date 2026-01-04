@@ -11,6 +11,8 @@ services:
     volumes:
       - ./kratos.db:/app/data
       - ./backend:/app
+      # Mount Docker socket for Docker-in-Docker (required for GitHub OAuth mode)
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]

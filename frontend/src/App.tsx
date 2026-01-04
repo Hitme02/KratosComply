@@ -18,6 +18,7 @@ const HelpPage = lazy(() => import("@/pages/Help").then((m) => ({ default: m.Hel
 // Legacy pages (kept for compatibility) - Dashboard redirects to AuditCockpit
 const DockerSetupPage = lazy(() => import("@/pages/DockerSetup").then((m) => ({ default: m.DockerSetupPage })));
 const GitHubCallbackPage = lazy(() => import("@/pages/GitHubCallback").then((m) => ({ default: m.GitHubCallbackPage })));
+const GitHubRepositoriesPage = lazy(() => import("@/pages/GitHubRepositories").then((m) => ({ default: m.GitHubRepositoriesPage })));
 const AboutPage = lazy(() => import("@/pages/About").then((m) => ({ default: m.AboutPage })));
 
 function LoadingFallback() {
@@ -54,6 +55,7 @@ function App() {
                 <Route path="/dashboard" element={<AuditCockpitPage />} />
                 <Route path="/docker-setup" element={<DockerSetupPage />} />
                 <Route path="/github/callback" element={<GitHubCallbackPage />} />
+                <Route path="/github/repositories" element={<GitHubRepositoriesPage />} />
                 <Route path="/about" element={<AboutPage />} />
                 </Routes>
               </Suspense>
