@@ -9,6 +9,8 @@ from pathlib import Path
 import ast
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
 
 from .config import (
@@ -21,6 +23,32 @@ from .config import (
     CLOUD_SECRET_PATTERNS,
 )
 from .findings import RawFinding
+try:
+    from .local_ai_detector import validate_finding_with_ai, get_ai_detector
+    AI_VALIDATION_AVAILABLE = True
+    # Initialize AI detector early to load model
+    _ = get_ai_detector()
+except ImportError:
+    AI_VALIDATION_AVAILABLE = False
+    def validate_finding_with_ai(*args, **kwargs):
+        return True, 0.5, "AI validation not available"
+try:
+    from .vulnerability_detectors import (
+        _scan_xxe_vulnerabilities,
+        _scan_ssrf_vulnerabilities,
+        _scan_insecure_deserialization,
+        _scan_path_traversal,
+        _scan_race_conditions,
+        _scan_crypto_misuse,
+    )
+except ImportError:
+    # Fallback if module doesn't exist yet
+    def _scan_xxe_vulnerabilities(*args, **kwargs): return []
+    def _scan_ssrf_vulnerabilities(*args, **kwargs): return []
+    def _scan_insecure_deserialization(*args, **kwargs): return []
+    def _scan_path_traversal(*args, **kwargs): return []
+    def _scan_race_conditions(*args, **kwargs): return []
+    def _scan_crypto_misuse(*args, **kwargs): return []
 from .advanced_detectors import (
     detect_consent_via_dependencies,
     detect_consent_via_api_routes,
@@ -61,6 +89,113 @@ def _should_skip(path: Path) -> bool:
     return False
 
 
+def _is_detector_code(path: Path, content: str = None) -> bool:
+    """Check if file contains detector/scanner code patterns (to avoid false positives).
+    
+    Returns True if the file appears to be detector/scanner code that defines patterns
+    for detecting vulnerabilities, rather than code that contains vulnerabilities.
+    """
+    # Check file path for detector/scanner indicators
+    path_str = str(path).lower()
+    detector_indicators = [
+        "detector", "scanner", "scanner", "scan_", "_scan_", "pattern", 
+        "compliance.py", "config.py", "detectors.py", "advanced_detectors.py",
+        "vulnerability_detectors.py", "local_ai_detector.py"
+    ]
+    
+    if any(indicator in path_str for indicator in detector_indicators):
+        return True
+    
+    # Check content for detector code patterns
+    if content is None:
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return False
+    
+    content_lower = content.lower()
+    
+    # Patterns that indicate this is detector code defining patterns, not using them
+    detector_patterns = [
+        "def _scan_",  # Scanner function definitions
+        "xss_patterns = [",  # Pattern definitions
+        "secret_patterns = [",
+        "injection_patterns = [",
+        "weak_cipher_patterns = [",
+        "sql_injection_patterns = [",  # SQL injection pattern definitions
+        "nosql_injection_patterns = [",  # NoSQL injection pattern definitions
+        "weak_ciphers = {",  # Weak cipher dictionary definitions
+        "weak_auth_patterns = [",  # Weak auth pattern definitions
+        "re.compile(",  # Regex pattern compilation
+        "CLOUD_SECRET_PATTERNS",  # Config constants
+        "SECRET_REGEX =",  # Pattern definitions
+        "pattern.*=.*r\"",  # Pattern assignments
+        "patterns = [",  # Pattern lists
+        "detection.*pattern",  # Comments about patterns
+        "= [",  # List assignments (often pattern lists)
+        "= {",  # Dictionary assignments (often pattern dicts)
+    ]
+    
+    # If file contains multiple detector patterns, it's likely detector code
+    pattern_count = sum(1 for pattern in detector_patterns if pattern in content_lower)
+    if pattern_count >= 2:
+        return True
+    
+    # Check if file contains pattern definitions followed by usage in loops
+    if "for pattern" in content_lower and "re.search(pattern" in content_lower:
+        return True
+    
+    return False
+
+
+def _is_pattern_definition(line: str, context: str = None) -> bool:
+    """Check if a line is defining a detection pattern rather than using it.
+    
+    Returns True if the line appears to be defining a regex pattern or list
+    of patterns for detection purposes.
+    """
+    line_lower = line.lower().strip()
+    
+    # Pattern definition indicators
+    pattern_def_indicators = [
+        "pattern", "patterns", "regex", "re.compile", "r\"", "r'",
+        "= [", "= {", "= (",  # Assignment to list/dict/tuple
+        "CLOUD_SECRET_PATTERNS", "SECRET_REGEX", "FALSE_POSITIVE_PATTERNS",
+        "xss_patterns", "injection_patterns", "weak_cipher_patterns",
+        "secret_patterns", "acl_patterns"
+    ]
+    
+    # Check if line is a pattern definition
+    if any(indicator in line_lower for indicator in pattern_def_indicators):
+        # Additional check: is it in a dictionary/list definition?
+        if ":" in line or "[" in line or "(" in line:
+            # Check context - if it's in a function that scans, it's a pattern definition
+            if context:
+                context_lower = context.lower()
+                if any(func in context_lower for func in ["def _scan_", "def scan_", "patterns =", "pattern =", "= [", "= {"]):
+                    return True
+            # Check if line looks like a pattern tuple: (r'...', "...")
+            if re.search(r'\(r["\']', line) or (re.search(r'\(["\'].*["\']\s*,', line) and '"' in line):
+                return True
+            return True
+    
+    # Check for regex pattern strings in pattern definitions
+    if re.search(r'r["\'].*["\']', line):
+        # If it's in a tuple/list context with pattern indicators, it's a definition
+        if context:
+            context_lower = context.lower()
+            if any(marker in context_lower for marker in ["patterns =", "pattern =", "= [", "= {", "sql_injection_patterns", "xss_patterns"]):
+                return True
+        if "pattern" in line_lower or "regex" in line_lower:
+            return True
+    
+    # Check for dictionary/list pattern definitions: "TripleDES": [r"...", ...]
+    if re.search(r'["\'][^"\']+["\']\s*:\s*\[', line) and ("pattern" in line_lower or "cipher" in line_lower or "secret" in line_lower):
+        return True
+    
+    return False
+
+
 def _relative_path(path: Path, root: Path) -> str:
     try:
         return str(path.relative_to(root))
@@ -68,39 +203,105 @@ def _relative_path(path: Path, root: Path) -> str:
         return str(path)
 
 
-def scan_workspace(root: Path) -> list[RawFinding]:
+def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False) -> list[RawFinding]:
     """Scan workspace for compliance control violations and evidence gaps.
     
     Returns findings that represent specific compliance framework violations,
     not generic security issues. Each finding maps to a verifiable control requirement.
+    
+    Args:
+        root: Root directory to scan
+        max_workers: Number of parallel workers for file scanning (default: 4)
+        show_progress: Whether to show progress indicators (default: False)
     """
+    start_time = time.time()
+    
+    # Initialize AI detector if available (loads model on first scan)
+    if AI_VALIDATION_AVAILABLE:
+        try:
+            from .local_ai_detector import get_ai_detector
+            detector = get_ai_detector()
+            if detector.enabled:
+                logger.info("AI-powered validation enabled for compliance findings")
+        except Exception as e:
+            logger.debug(f"AI detector initialization skipped: {e}")
+    
     findings: list[RawFinding] = []
-    for file_path in _iter_files(root):
-        if file_path.suffix == ".py":
-            findings.extend(_scan_python_file(file_path, root))
-        else:
-            # Scan ALL file types for secrets, not just specific extensions
-            findings.extend(_scan_text_file(file_path, root))
-            # Also scan code files (PHP, Java, C#, etc.) for secrets
-            if file_path.suffix in (".php", ".java", ".cs", ".js", ".ts", ".rb", ".go", ".cpp", ".c", ".h", ".swift", ".kt", ".scala"):
-                findings.extend(_scan_code_file_for_secrets(file_path, root))
+    file_count = 0
+    error_count = 0
+    
+    # Collect all files first for progress tracking
+    all_files = list(_iter_files(root))
+    total_files = len(all_files)
+    
+    if show_progress:
+        logger.info(f"Scanning {total_files} files with {max_workers} workers...")
+    
+    # Parallel file scanning for better performance
+    def scan_single_file(file_path: Path) -> tuple[list[RawFinding], bool]:
+        """Scan a single file and return findings and success status."""
+        file_findings = []
+        try:
+            if file_path.suffix == ".py":
+                file_findings.extend(_scan_python_file(file_path, root))
+            else:
+                # Scan ALL file types for secrets, not just specific extensions
+                file_findings.extend(_scan_text_file(file_path, root))
+                # Also scan code files (PHP, Java, C#, etc.) for secrets
+                if file_path.suffix in (".php", ".java", ".cs", ".js", ".ts", ".rb", ".go", ".cpp", ".c", ".h", ".swift", ".kt", ".scala"):
+                    file_findings.extend(_scan_code_file_for_secrets(file_path, root))
+            
+            # Scan for SSH private keys in any file
+            if file_path.suffix in (".key", ".pem", ".p12", ".pfx") or "key" in file_path.name.lower() or "private" in file_path.name.lower():
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    if "-----BEGIN" in content and ("PRIVATE KEY" in content or "RSA PRIVATE KEY" in content or "DSA PRIVATE KEY" in content):
+                        file_findings.append(RawFinding(
+                            type="hardcoded_secret",
+                            file=_relative_path(file_path, root),
+                            line=None,
+                            snippet="SSH private key file detected",
+                            severity="critical",
+                            confidence=0.99,
+                            metadata={"secret_type": "SSH_PRIVATE_KEY", "file_type": file_path.suffix}
+                        ))
+                except Exception:
+                    pass
+            
+            return file_findings, True
+        except Exception as e:
+            logger.debug(f"Error scanning {file_path}: {e}")
+            return [], False
+    
+    # Use ThreadPoolExecutor for parallel scanning
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all file scanning tasks
+        future_to_file = {executor.submit(scan_single_file, file_path): file_path for file_path in all_files}
         
-        # Scan for SSH private keys in any file
-        if file_path.suffix in (".key", ".pem", ".p12", ".pfx") or "key" in file_path.name.lower() or "private" in file_path.name.lower():
+        # Collect results as they complete
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
-                if "-----BEGIN" in content and ("PRIVATE KEY" in content or "RSA PRIVATE KEY" in content or "DSA PRIVATE KEY" in content):
-                    findings.append(RawFinding(
-                        type="hardcoded_secret",
-                        file=_relative_path(file_path, root),
-                        line=None,
-                        snippet="SSH private key file detected",
-                        severity="critical",
-                        confidence=0.99,
-                        metadata={"secret_type": "SSH_PRIVATE_KEY", "file_type": file_path.suffix}
-                    ))
-            except Exception:
-                pass
+                file_findings, success = future.result()
+                findings.extend(file_findings)
+                file_count += 1
+                if not success:
+                    error_count += 1
+                
+                if show_progress and file_count % 100 == 0:
+                    logger.info(f"Processed {file_count}/{total_files} files ({len(findings)} findings so far)...")
+            except Exception as e:
+                logger.debug(f"Error processing {file_path}: {e}")
+                error_count += 1
+                file_count += 1
+    
+    if show_progress:
+        scan_time = time.time() - start_time
+        logger.info(f"File scanning complete: {file_count} files, {len(findings)} findings, {error_count} errors in {scan_time:.2f}s")
+    
+    # Enhanced detection capabilities (these scan the entire workspace, not individual files)
+    logger.debug("Running enhanced detection scans...")
+    enhanced_start = time.time()
     
     # Enhanced detection capabilities
     findings.extend(_scan_cloud_secrets(root))
@@ -118,6 +319,14 @@ def scan_workspace(root: Path) -> list[RawFinding]:
     findings.extend(_scan_missing_logging(root))
     findings.extend(_scan_command_injection(root))
     findings.extend(_scan_xss_vulnerabilities(root))
+    findings.extend(_scan_xxe_vulnerabilities(root))
+    findings.extend(_scan_ssrf_vulnerabilities(root))
+    findings.extend(_scan_insecure_deserialization(root))
+    findings.extend(_scan_path_traversal(root))
+    findings.extend(_scan_race_conditions(root))
+    findings.extend(_scan_crypto_misuse(root))
+    findings.extend(_scan_debug_mode(root))
+    findings.extend(_scan_insecure_cookies(root))
     
     # Industry-grade security detections
     findings.extend(_scan_advanced_secrets(root))
@@ -132,6 +341,15 @@ def scan_workspace(root: Path) -> list[RawFinding]:
     # Only scan once (removed duplicate scans)
     findings.extend(_scan_dpdp_compliance(root))
     findings.extend(_scan_gdpr_compliance(root))
+    
+    total_time = time.time() - start_time
+    enhanced_time = time.time() - enhanced_start
+    
+    if show_progress:
+        logger.info(f"Scan complete: {len(findings)} total findings in {total_time:.2f}s (enhanced scans: {enhanced_time:.2f}s)")
+    
+    # Store scan statistics in logger context
+    logger.debug(f"Scan statistics: {file_count} files, {len(findings)} findings, {error_count} errors, {total_time:.2f}s")
     
     return findings
 
@@ -161,6 +379,11 @@ def _scan_python_file(path: Path, root: Path) -> list[RawFinding]:
 def _scan_python_secrets(path: Path, root: Path, content: str) -> list[RawFinding]:
     """Scan Python code for hardcoded secrets."""
     findings: list[RawFinding] = []
+    
+    # Skip detector code to avoid false positives
+    if _is_detector_code(path, content):
+        return []
+    
     lines = content.splitlines()
     is_test_file = "test" in path.name.lower() or "spec" in path.name.lower()
     is_example_file = "example" in path.name.lower() or "sample" in path.name.lower()
@@ -170,6 +393,10 @@ def _scan_python_secrets(path: Path, root: Path, content: str) -> list[RawFindin
         
         # Skip comment-only lines
         if stripped.startswith('#'):
+            continue
+        
+        # Skip pattern definitions
+        if _is_pattern_definition(line, content):
             continue
         
         # Check for hardcoded secrets using regex
@@ -272,6 +499,10 @@ def _scan_code_file_for_secrets(path: Path, root: Path) -> list[RawFinding]:
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
+        return []
+    
+    # Skip detector code to avoid false positives
+    if _is_detector_code(path, content):
         return []
     
     lines = content.splitlines()
@@ -479,6 +710,30 @@ def _scan_code_file_for_secrets(path: Path, root: Path) -> list[RawFinding]:
                 
                 # Only report if confidence is reasonable (lowered threshold to catch more)
                 if confidence >= 0.4:
+                    # AI validation (optional, graceful degradation if not available)
+                    if AI_VALIDATION_AVAILABLE:
+                        try:
+                            context_lines = lines[max(0, line_no-3):min(len(lines), line_no+3)]
+                            context = '\n'.join(context_lines)
+                            is_valid, ai_confidence, ai_explanation = validate_finding_with_ai(
+                                finding_type="hardcoded_secret",
+                                snippet=line.strip()[:200],
+                                context=context,
+                                file_path=str(path),
+                                line_no=line_no
+                            )
+                            
+                            # If AI says it's a false positive, skip it
+                            if not is_valid:
+                                logger.debug(f"AI filtered false positive: {ai_explanation}")
+                                continue
+                            
+                            # Adjust confidence based on AI validation
+                            confidence = (confidence + ai_confidence) / 2
+                        except Exception as e:
+                            # AI validation failed, continue with original confidence
+                            logger.debug(f"AI validation error (continuing): {e}")
+                    
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(path, root),
@@ -829,11 +1084,33 @@ def _scan_database_security(root: Path) -> list[RawFinding]:
 
 
 def _scan_cicd_security(root: Path) -> list[RawFinding]:
-    """Scan CI/CD configuration files for security issues."""
+    """Scan CI/CD configuration files for security issues - Industry-grade comprehensive checks."""
     findings: list[RawFinding] = []
     
+    # CI/CD file patterns
+    cicd_files = [
+        ".github/workflows", ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml", 
+        "circle.yml", ".circleci", "azure-pipelines.yml", ".drone.yml",
+        "bitbucket-pipelines.yml", "buildkite.yml", ".gitlab", "Jenkinsfile.groovy"
+    ]
+    
     for file_path in _iter_files(root):
-        if file_path.name not in (".github", ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml", "circle.yml"):
+        # Check if it's a CI/CD file
+        is_cicd_file = False
+        for cicd_pattern in cicd_files:
+            if cicd_pattern in str(file_path) or file_path.name in cicd_files:
+                is_cicd_file = True
+                break
+        
+        if not is_cicd_file:
+            # Also check common CI/CD file extensions in CI directories
+            if file_path.suffix in (".yml", ".yaml", ".json") and (
+                ".github" in str(file_path) or ".gitlab" in str(file_path) or 
+                ".circleci" in str(file_path) or "jenkins" in file_path.name.lower()
+            ):
+                is_cicd_file = True
+        
+        if not is_cicd_file:
             continue
         
         try:
@@ -841,8 +1118,36 @@ def _scan_cicd_security(root: Path) -> list[RawFinding]:
         except Exception:
             continue
         
+        lines = content.splitlines()
+        
+        # Check for hardcoded secrets in CI/CD files
+        secret_patterns = [
+            (r'GITHUB_TOKEN\s*[:=]\s*["\']([^"\']{10,})["\']', "GitHub token in CI/CD"),
+            (r'CI.*SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "CI secret in pipeline"),
+            (r'pipeline.*secret\s*[:=]\s*["\']([^"\']{10,})["\']', "Pipeline secret"),
+            (r'AWS.*KEY\s*[:=]\s*["\']([^"\']{10,})["\']', "AWS key in CI/CD"),
+            (r'password\s*[:=]\s*["\']([^"\']{8,})["\']', "Password in CI/CD"),
+        ]
+        
+        for pattern, description in secret_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    findings.append(RawFinding(
+                        type="hardcoded_secret",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="critical",
+                        confidence=0.95,
+                        metadata={"secret_type": "CI_CD_SECRET", "issue": description, "control_id": "SOC2-CC6.2"}
+                    ))
+                    break
+        
         # Check for unsigned artifacts
-        if "sign" not in content.lower() and "gpg" not in content.lower():
+        if "sign" not in content.lower() and "gpg" not in content.lower() and "cosign" not in content.lower():
             findings.append(RawFinding(
                 type="unsigned_artifacts",
                 file=_relative_path(file_path, root),
@@ -850,6 +1155,43 @@ def _scan_cicd_security(root: Path) -> list[RawFinding]:
                 snippet="CI/CD pipeline does not sign artifacts",
                 severity="medium",
                 confidence=0.7,
+                metadata={"control_id": "SOC2-CC8.1"}
+            ))
+        
+        # Check for insecure docker image pulls
+        if re.search(r'docker\s+pull\s+[^:]+:latest', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="unpinned_dependency",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="Docker image pulled with :latest tag (unpinned)",
+                severity="medium",
+                confidence=0.8,
+                metadata={"control_id": "SOC2-CC8.1"}
+            ))
+        
+        # Check for missing dependency scanning
+        if not re.search(r'snyk|dependabot|safety|bandit|trivy|grype', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="missing_dependency_lock",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="CI/CD pipeline missing dependency vulnerability scanning",
+                severity="medium",
+                confidence=0.75,
+                metadata={"control_id": "SOC2-CC8.1"}
+            ))
+        
+        # Check for missing security scanning
+        if not re.search(r'security.*scan|vulnerability.*scan|sast|dast', content, re.IGNORECASE):
+            findings.append(RawFinding(
+                type="missing_logging",
+                file=_relative_path(file_path, root),
+                line=None,
+                snippet="CI/CD pipeline missing security scanning",
+                severity="medium",
+                confidence=0.7,
+                metadata={"control_id": "SOC2-CC7.2"}
             ))
     
     return findings
@@ -949,6 +1291,10 @@ def _scan_weak_encryption(root: Path) -> list[RawFinding]:
         except Exception:
             continue
         
+        # Skip detector code to avoid false positives
+        if _is_detector_code(file_path, content):
+            continue
+        
         lines = content.splitlines()
         
         # Check for weak ciphers
@@ -1007,6 +1353,14 @@ def _scan_injection_vulnerabilities(root: Path) -> list[RawFinding]:
         (r'f["\'].*SELECT.*{.*}.*["\']', "f-string with SQL query"),
         (r'["\'].*SELECT.*["\']\.format\(', "String format in SQL query"),
         (r'execute\s*\(\s*["\'].*%(?:s|d).*["\']', "String formatting in SQL execute"),
+        # Java Spring SQL injection patterns
+        (r'createStatement\(\)\.executeQuery\s*\(\s*["\'].*\+', "Java Spring: String concatenation in createStatement().executeQuery()"),
+        (r'connection\.createStatement\(\)\.executeQuery\s*\(\s*["\'].*\+', "Java Spring: String concatenation in connection.createStatement().executeQuery()"),
+        (r'String\s+query\s*=\s*["\'].*SELECT.*["\']\s*\+', "Java: String concatenation in SQL query variable"),
+        (r'query\s*=\s*["\'].*SELECT.*["\']\s*\+', "Java: String concatenation in SQL query assignment"),
+        (r'executeQuery\s*\(\s*["\'].*SELECT.*["\']\s*\+', "Java: String concatenation in executeQuery()"),
+        (r'\.executeQuery\s*\(\s*["\'].*SELECT.*["\']\s*\+', "Java: String concatenation in .executeQuery()"),
+        (r'PreparedStatement.*executeQuery.*\+', "Java: String concatenation in PreparedStatement (should use parameters)"),
     ]
     
     # NoSQL injection patterns (improved for Java, Python, JavaScript)
@@ -1153,13 +1507,37 @@ def _scan_weak_authentication(root: Path) -> list[RawFinding]:
                         if any(hf in context for hf in hashing_functions):
                             continue  # Skip if hashing is used nearby
                     
+                    # AI validation for authentication issues
+                    finding_type = "weak_authentication" if "SECRET_KEY" not in description else "hardcoded_secret"
+                    final_confidence = 0.9 if "SECRET_KEY" in description else 0.8
+                    
+                    if AI_VALIDATION_AVAILABLE:
+                        try:
+                            context_lines = lines[max(0, line_no-3):min(len(lines), line_no+3)]
+                            context = '\n'.join(context_lines)
+                            is_valid, ai_confidence, ai_explanation = validate_finding_with_ai(
+                                finding_type=finding_type,
+                                snippet=line.strip()[:200],
+                                context=context,
+                                file_path=str(file_path),
+                                line_no=line_no
+                            )
+                            
+                            if not is_valid:
+                                logger.debug(f"AI filtered false positive: {ai_explanation}")
+                                continue
+                            
+                            final_confidence = (final_confidence + ai_confidence) / 2
+                        except Exception as e:
+                            logger.debug(f"AI validation error (continuing): {e}")
+                    
                     findings.append(RawFinding(
-                        type="weak_authentication" if "SECRET_KEY" not in description else "hardcoded_secret",
+                        type=finding_type,
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
-                        severity="high" if "SECRET_KEY" in description else "high",
-                        confidence=0.9 if "SECRET_KEY" in description else 0.8,
+                        severity="high",
+                        confidence=final_confidence,
                         metadata={"issue": description, "control_id": "SOC2-CC6.1" if "SECRET_KEY" not in description else "SOC2-CC6.2"}
                     ))
                     break  # Only report once per file per pattern
@@ -1511,11 +1889,15 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
     # Command injection patterns
     command_injection_patterns = [
         # PHP: system($_GET['cmd']), system($_POST['cmd']), system($_REQUEST['cmd'])
+        # More flexible patterns to catch variations
         (r'system\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via system() with user input (PHP)"),
+        (r'system\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', "Command injection via system() with superglobal (PHP)"),
         (r'exec\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via exec() with user input (PHP)"),
+        (r'exec\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', "Command injection via exec() with superglobal (PHP)"),
         (r'shell_exec\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via shell_exec() with user input (PHP)"),
         (r'passthru\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Command injection via passthru() with user input (PHP)"),
         (r'eval\s*\(\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "Code injection via eval() with user input (PHP)"),
+        (r'eval\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', "Code injection via eval() with superglobal (PHP)"),
         # Python: os.system(user_input), subprocess.call(user_input)
         (r'os\.system\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via os.system() (Python)"),
         (r'subprocess\.(call|run|Popen)\s*\(\s*[a-zA-Z_]+[^)]*shell\s*=\s*True', "Command injection via subprocess with shell=True (Python)"),
@@ -1550,13 +1932,35 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
                     # Check if it's in a test file (lower confidence)
                     is_test = "test" in file_path.name.lower()
                     
+                    # AI validation for command injection
+                    final_confidence = 0.9 if not is_test else 0.6
+                    if AI_VALIDATION_AVAILABLE:
+                        try:
+                            context_lines = lines[max(0, line_no-3):min(len(lines), line_no+3)]
+                            context = '\n'.join(context_lines)
+                            is_valid, ai_confidence, ai_explanation = validate_finding_with_ai(
+                                finding_type="command_injection",
+                                snippet=line.strip()[:200],
+                                context=context,
+                                file_path=str(file_path),
+                                line_no=line_no
+                            )
+                            
+                            if not is_valid:
+                                logger.debug(f"AI filtered false positive: {ai_explanation}")
+                                continue
+                            
+                            final_confidence = (final_confidence + ai_confidence) / 2
+                        except Exception as e:
+                            logger.debug(f"AI validation error (continuing): {e}")
+                    
                     findings.append(RawFinding(
                         type="potential_sql_injection",  # Use same type for injection vulnerabilities
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="critical",
-                        confidence=0.9 if not is_test else 0.6,
+                        confidence=final_confidence,
                         metadata={"issue": description, "vulnerability": "command_injection", "control_id": "SOC2-CC6.1"}
                     ))
                     break  # Only report once per file per pattern
@@ -1572,27 +1976,51 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
     xss_patterns = [
         # PHP: echo $_GET['input'], echo $_POST['input'], print $_REQUEST['input']
         (r'echo\s+\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct echo of user input without sanitization (PHP)"),
+        (r'echo\s+\$_(?:GET|POST|REQUEST|COOKIE)', "XSS: Direct echo of superglobal without sanitization (PHP)"),
         (r'print\s+\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct print of user input without sanitization (PHP)"),
+        (r'print\s+\$_(?:GET|POST|REQUEST|COOKIE)', "XSS: Direct print of superglobal without sanitization (PHP)"),
         (r'<\?=\s*\$_?(?:GET|POST|REQUEST|COOKIE)\[', "XSS: Direct output of user input in PHP short tag"),
-        # Python: print(user_input), {{ user_input }} (templates)
+        (r'<\?=\s*\$_(?:GET|POST|REQUEST|COOKIE)', "XSS: Direct output of superglobal in PHP short tag"),
+        # Flask/Jinja2: {{ variable | safe }} - CRITICAL: unsafe filter
+        (r'\{\{\s*[^}]+\s*\|\s*safe\s*\}\}', "XSS: Template variable with |safe filter (Flask/Jinja2) - CRITICAL"),
+        (r'\{\{\s*[^}]+\s*\|\s*safe\s*\}\}', "XSS: Template variable with |safe filter (Django) - CRITICAL"),
+        # Django: {% autoescape off %} or |safe filter
+        (r'\{%\s*autoescape\s+off\s*%\}', "XSS: Autoescape disabled in Django template"),
+        # Thymeleaf (Java Spring): th:utext - unescaped text (CRITICAL)
+        (r'th:utext\s*=\s*["\']?\{[^}]+\}', "XSS: Thymeleaf th:utext with unescaped expression (Java Spring) - CRITICAL"),
+        (r'th:utext\s*=\s*["\']?\$\{[^}]+\}', "XSS: Thymeleaf th:utext with unescaped expression (Java Spring) - CRITICAL"),
+        # Jinja2: {{ variable }} without escaping (when in unsafe context)
+        (r'\{\{\s*[a-zA-Z_]+\s*\}\}(?!.*\|escape)(?!.*\|e)(?!.*\|safe)', "XSS: Jinja2 template variable without explicit escaping"),
+        # Thymeleaf: [[${variable}]] - unescaped inline text
+        (r'\[\[\$\{[^}]+\}\]\]', "XSS: Thymeleaf unescaped inline expression [[${...}]] (Java Spring)"),
+        # Python: print(user_input), {{ user_input }} (templates without safe)
         (r'print\s*\(\s*[a-zA-Z_]+[^)]*\)', "XSS: Direct print of variable (Python)"),
-        (r'\{\{\s*[a-zA-Z_]+\s*\}\}', "XSS: Template variable without escaping (Jinja2/Django)"),
+        (r'\{\{\s*[a-zA-Z_]+\s*\}\}(?!.*\|safe)', "XSS: Template variable without escaping (Jinja2/Django)"),
         # JavaScript: document.write(user_input), innerHTML = user_input
         (r'document\.write\s*\(\s*[a-zA-Z_]+', "XSS: Direct document.write() with variable (JavaScript)"),
         (r'\.innerHTML\s*=\s*[a-zA-Z_]+', "XSS: Direct innerHTML assignment with variable (JavaScript)"),
         (r'\.outerHTML\s*=\s*[a-zA-Z_]+', "XSS: Direct outerHTML assignment with variable (JavaScript)"),
+        # React: dangerouslySetInnerHTML
+        (r'dangerouslySetInnerHTML\s*=\s*\{[^}]*__html', "XSS: dangerouslySetInnerHTML usage (React)"),
+        # Flask: Markup() or escape=False
+        (r'Markup\s*\([^)]*request\.', "XSS: Markup() with request data (Flask)"),
+        (r'escape\s*=\s*False', "XSS: escape=False in template rendering"),
     ]
     
     for file_path in _iter_files(root):
         if _should_skip(file_path):
             continue
         
-        if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb", ".html", ".htm", ".jsp", ".erb"):
+        if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb", ".html", ".htm", ".jsp", ".erb", ".java", ".xml"):
             continue
         
         try:
             content = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            continue
+        
+        # Skip detector code to avoid false positives
+        if _is_detector_code(file_path, content):
             continue
         
         lines = content.splitlines()
@@ -1605,16 +2033,48 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
                     # Skip comments
                     if stripped.startswith(('//', '/*', '*', '#', '--', '<!--')):
                         continue
-                    # Check if sanitization exists nearby
-                    context_start = max(0, line_no - 3)
-                    context_end = min(len(lines), line_no + 3)
-                    context = '\n'.join(lines[context_start:context_end]).lower()
-                    # Skip if sanitization functions are used
-                    sanitization_functions = ['htmlspecialchars', 'htmlentities', 'escape', 'sanitize', 'xss', 'filter', 'strip_tags']
-                    if any(sf in context for sf in sanitization_functions):
+                    
+                    # Skip if this is a pattern definition (not actual usage)
+                    if _is_pattern_definition(line, content):
                         continue
                     
+                    # Check if sanitization exists nearby (except for |safe which is the vulnerability)
+                    if '|safe' not in line.lower():
+                        context_start = max(0, line_no - 3)
+                        context_end = min(len(lines), line_no + 3)
+                        context = '\n'.join(lines[context_start:context_end]).lower()
+                        # Skip if sanitization functions are used
+                        sanitization_functions = ['htmlspecialchars', 'htmlentities', 'escape', 'sanitize', 'xss', 'filter', 'strip_tags', '|escape', '|e']
+                        if any(sf in context for sf in sanitization_functions):
+                            continue
+                    
                     is_test = "test" in file_path.name.lower()
+                    
+                    # AI validation for XSS (less aggressive for security issues)
+                    final_confidence = 0.85 if not is_test else 0.6
+                    if AI_VALIDATION_AVAILABLE:
+                        try:
+                            context_lines = lines[max(0, line_no-3):min(len(lines), line_no+3)]
+                            context = '\n'.join(context_lines)
+                            is_valid, ai_confidence, ai_explanation = validate_finding_with_ai(
+                                finding_type="xss",
+                                snippet=line.strip()[:200],
+                                context=context,
+                                file_path=str(file_path),
+                                line_no=line_no
+                            )
+                            
+                            # For critical security issues like XSS, be less aggressive with filtering
+                            # Only filter if AI is very confident it's a false positive
+                            if not is_valid and ai_confidence < 0.3:
+                                logger.debug(f"AI filtered false positive: {ai_explanation}")
+                                continue
+                            
+                            # Boost confidence if AI confirms it's real
+                            if is_valid and ai_confidence > 0.7:
+                                final_confidence = min(0.95, (final_confidence + ai_confidence) / 2)
+                        except Exception as e:
+                            logger.debug(f"AI validation error (continuing): {e}")
                     
                     findings.append(RawFinding(
                         type="potential_sql_injection",  # Use same type for injection vulnerabilities
@@ -1622,10 +2082,154 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="high",
-                        confidence=0.85 if not is_test else 0.6,
+                        confidence=final_confidence,
                         metadata={"issue": description, "vulnerability": "xss", "control_id": "SOC2-CC6.1"}
                     ))
                     break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_debug_mode(root: Path) -> list[RawFinding]:
+    """Detect DEBUG mode enabled in production code (Flask, Django, etc.)."""
+    findings: list[RawFinding] = []
+    
+    debug_patterns = [
+        # Flask
+        (r'app\.config\[["\']DEBUG["\']\]\s*=\s*True', "DEBUG mode enabled in Flask (production risk)"),
+        (r'DEBUG\s*=\s*True', "DEBUG mode enabled (Flask/Django)"),
+        (r'FLASK_ENV\s*=\s*["\']development["\']', "Flask environment set to development"),
+        (r'FLASK_DEBUG\s*=\s*1', "Flask DEBUG enabled"),
+        # Django
+        (r'DEBUG\s*=\s*True', "DEBUG mode enabled in Django settings"),
+        (r'ALLOWED_HOSTS\s*=\s*\[\s*["\']\*["\']', "Django ALLOWED_HOSTS set to * (insecure)"),
+        # Node.js/Express
+        (r'process\.env\.NODE_ENV\s*!=\s*["\']production["\']', "Node.js not in production mode"),
+        (r'debug\s*:\s*true', "Debug mode enabled (Express/Node.js)"),
+        # General
+        (r'environment\s*=\s*["\']dev["\']', "Environment set to development"),
+        (r'environment\s*=\s*["\']development["\']', "Environment set to development"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Skip detector code
+        if _is_detector_code(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".env", ".config", ".conf"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        for pattern, description in debug_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    # Skip comments
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    # Skip pattern definitions
+                    if _is_pattern_definition(line, content):
+                        continue
+                    # Skip test files
+                    if "test" in file_path.name.lower() or "test" in file_path.parts:
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_configuration",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="medium",
+                        confidence=0.9,
+                        metadata={"issue": description, "control_id": "SOC2-CC7.2"}
+                    ))
+                    break
+    
+    return findings
+
+
+def _scan_insecure_cookies(root: Path) -> list[RawFinding]:
+    """Detect insecure cookie handling (user-controlled values, missing flags)."""
+    findings: list[RawFinding] = []
+    
+    insecure_cookie_patterns = [
+        # Flask: set_cookie with user input
+        (r'response\.set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+', "Insecure cookie: user-controlled value (Flask)"),
+        (r'set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*request\.', "Insecure cookie: request data in cookie value (Flask)"),
+        # Django: set_cookie with user input
+        (r'response\.set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+', "Insecure cookie: user-controlled value (Django)"),
+        # Missing secure flag
+        (r'set_cookie\s*\([^)]*\)(?!.*secure\s*=\s*True)', "Cookie set without secure flag (Flask/Django)"),
+        (r'set_cookie\s*\([^)]*\)(?!.*httponly\s*=\s*True)', "Cookie set without HttpOnly flag (Flask/Django)"),
+        # JavaScript: document.cookie with user input
+        (r'document\.cookie\s*=\s*[a-zA-Z_]+', "Insecure cookie: direct assignment to document.cookie (JavaScript)"),
+        (r'document\.cookie\s*\+=\s*[a-zA-Z_]+', "Insecure cookie: concatenation to document.cookie (JavaScript)"),
+        # Express: res.cookie without secure
+        (r'res\.cookie\s*\([^)]*\)(?!.*secure\s*:\s*true)', "Cookie set without secure flag (Express)"),
+        (r'res\.cookie\s*\([^)]*\)(?!.*httpOnly\s*:\s*true)', "Cookie set without httpOnly flag (Express)"),
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Skip detector code
+        if _is_detector_code(file_path):
+            continue
+        
+        if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb"):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        for pattern, description in insecure_cookie_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    # Skip comments
+                    if stripped.startswith(('//', '/*', '*', '#', '--')):
+                        continue
+                    # Skip pattern definitions
+                    if _is_pattern_definition(line, content):
+                        continue
+                    # Check context for user input
+                    context_start = max(0, line_no - 5)
+                    context_end = min(len(lines), line_no + 5)
+                    context = '\n'.join(lines[context_start:context_end]).lower()
+                    
+                    # Only flag if it involves user input (request, GET, POST, etc.)
+                    user_input_indicators = ['request.', '$_get', '$_post', 'req.', 'req.query', 'req.body', 'req.params']
+                    if not any(indicator in context for indicator in user_input_indicators):
+                        # For missing flags, still report but with lower confidence
+                        if 'secure' in description.lower() or 'httponly' in description.lower():
+                            pass  # Report missing flags
+                        else:
+                            continue  # Skip if no user input involved
+                    
+                    findings.append(RawFinding(
+                        type="insecure_configuration",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.85,
+                        metadata={"issue": description, "control_id": "SOC2-CC6.1"}
+                    ))
+                    break
     
     return findings
 
@@ -1924,12 +2528,22 @@ def _scan_access_control_issues(root: Path) -> list[RawFinding]:
     """Detect access control and authorization issues."""
     findings: list[RawFinding] = []
     
-    # Path traversal patterns
+    # Path traversal patterns - only flag if user input is involved
     path_traversal_patterns = [
         (r'open\([^)]*\.\./', "Path traversal in file open"),
         (r'readFile\([^)]*\.\./', "Path traversal in readFile"),
         (r'File\.ReadAllText\([^)]*\.\./', "Path traversal in ReadAllText"),
         (r'\.\./.*\.\./', "Multiple path traversal sequences"),
+    ]
+    
+    # Normal file operation patterns (should NOT be flagged as ACL issues)
+    normal_file_ops = [
+        r'with open\([^)]*["\']',  # String literal file paths
+        r'read_text\([^)]*["\']',  # String literal paths
+        r'Path\([^)]*["\']',  # Path objects with literals
+        r'file_path\.read',  # Reading from known file_path variable
+        r'package_json.*read',  # Reading package.json
+        r'requirements.*read',  # Reading requirements files
     ]
     
     # Missing input validation
@@ -1964,15 +2578,33 @@ def _scan_access_control_issues(root: Path) -> list[RawFinding]:
         
         lines = content.splitlines()
         
-        # Check for path traversal
+        # Skip detector code to avoid false positives
+        if _is_detector_code(file_path, content):
+            continue
+        
+        # Check for path traversal (only if user input is involved)
         for pattern, description in path_traversal_patterns:
             for line_no, line in enumerate(lines, start=1):
                 if re.search(pattern, line, re.IGNORECASE):
                     stripped = line.strip()
                     if stripped.startswith(('//', '/*', '*', '#', '--')):
                         continue
+                    
+                    # Skip if it's a normal file operation (not user input)
+                    if any(re.search(normal_op, line, re.IGNORECASE) for normal_op in normal_file_ops):
+                        continue
+                    
                     # Check if path is sanitized
                     if 'os.path.join' in line or 'path.join' in line or 'realpath' in line or 'abspath' in line:
+                        continue
+                    
+                    # Only flag if user input is involved (request, input, argv, etc.)
+                    context_start = max(0, line_no - 5)
+                    context_end = min(len(lines), line_no + 5)
+                    context = '\n'.join(lines[context_start:context_end]).lower()
+                    user_input_indicators = ['request.', 'input(', 'argv', 'getenv', '$_get', '$_post', 'req.', 'query', 'params']
+                    if not any(indicator in context for indicator in user_input_indicators):
+                        # If no user input, it's likely a normal file operation - skip
                         continue
                     
                     findings.append(RawFinding(

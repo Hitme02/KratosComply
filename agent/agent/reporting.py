@@ -20,13 +20,20 @@ logger = logging.getLogger(__name__)
 def generate_report(
     target: Path,
     project_name: str | None,
+    raw_findings: list[RawFinding] | None = None,
 ) -> tuple[list[Finding], dict[str, RawFinding], dict[str, Any]]:
     """Scan ``target`` and return finalized findings and report metadata.
     
     Now includes system-level evidence collection for VERIFIED_SYSTEM controls.
+    
+    Args:
+        target: Target directory to scan
+        project_name: Optional project name override
+        raw_findings: Optional pre-scanned findings (if None, will scan)
     """
     # Collect code-level findings (machine-verifiable)
-    raw_findings = scan_workspace(target)
+    if raw_findings is None:
+        raw_findings = scan_workspace(target)
     
     # Collect system-level evidence (configuration-verifiable)
     system_evidence = collect_system_evidence(target)

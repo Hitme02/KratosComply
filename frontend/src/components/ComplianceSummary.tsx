@@ -20,6 +20,9 @@ export function ComplianceSummary() {
     (f.compliance_frameworks_affected || []).forEach((fw: string) => frameworks.add(fw));
   });
   
+  // Extract scan statistics if available (v2.2.0+)
+  const scanStats = (report as any).scan_statistics;
+  
   const metrics = [
     { label: "Control Failures", value: failedControls },
     { label: "Controls Verified", value: passedControls },
@@ -28,6 +31,15 @@ export function ComplianceSummary() {
     { label: "Evidence Gaps", value: report.findings.length },
     { label: "Audit Status", value: controlPassRate >= 80 ? "Audit Ready" : "Evidence Review Required" },
   ];
+  
+  // Add scan statistics if available
+  if (scanStats) {
+    metrics.push(
+      { label: "Files Scanned", value: scanStats.files_scanned || "N/A" },
+      { label: "Scan Duration", value: scanStats.scan_duration_seconds ? `${scanStats.scan_duration_seconds}s` : "N/A" },
+      { label: "Workers Used", value: scanStats.workers_used || "N/A" }
+    );
+  }
 
   return (
     <Card>

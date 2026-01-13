@@ -33,6 +33,13 @@ export interface ProjectInfo {
   scan_time: string;
 }
 
+export interface ScanStatistics {
+  total_findings?: number;
+  scan_duration_seconds?: number;
+  workers_used?: number;
+  files_scanned?: number;
+}
+
 export interface Report {
   report_version: string;
   project: ProjectInfo;
@@ -52,6 +59,7 @@ export interface Report {
   merkle_root: string;
   agent_signature: string;
   agent_version: string;
+  scan_statistics?: ScanStatistics; // v2.2.0+
 }
 
 export interface VerificationResult {

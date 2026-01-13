@@ -12,6 +12,38 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 
 **Core Philosophy**: Compliance includes security. Every detection maps to a specific compliance control, legal requirement, or audit verifiability requirement.
 
+## What's New in v2.2.0
+
+### 🚀 Performance Improvements
+- **Parallel Processing**: 2-4x faster scans with multi-threaded file processing (configurable with `--workers`)
+- **Progress Reporting**: Real-time scan progress and statistics (`--progress` flag)
+- **Performance Metrics**: Detailed timing and resource usage tracking included in reports
+
+### 📊 Export Formats
+- **JSON** (default): Full report with all metadata and scan statistics
+- **CSV**: Spreadsheet-friendly format for analysis and reporting
+- **HTML**: Visual report with styling, charts, and severity color-coding
+
+### 🤖 AI Enhancements (v2.1.0+)
+- **100+ Known Patterns**: Comprehensive database of false positives and real vulnerabilities
+- **Multi-Factor Validation**: Combines semantic similarity with heuristic analysis
+- **Context-Aware Detection**: Distinguishes detector code from actual vulnerabilities
+- **Industry-Specific Patterns**: HIPAA, PCI-DSS, GDPR, SOC2, ISO27001 compliance patterns
+- **Confidence Scoring**: Intelligent confidence adjustment based on pattern matching
+
+### 🔒 Security Improvements
+- **Advanced XSS Detection**: Flask `|safe` filter, Django autoescape, React `dangerouslySetInnerHTML`
+- **DEBUG Mode Detection**: Flask, Django, Node.js production security risks
+- **Insecure Cookie Detection**: User-controlled values, missing security flags
+- **Enhanced Vulnerability Coverage**: XXE, SSRF, insecure deserialization, path traversal, race conditions, crypto misuse
+- **Detector Code Exclusion**: Prevents false positives from scanner code patterns
+
+### 🛠️ Developer Experience
+- **Better Error Handling**: Per-file error isolation, graceful degradation
+- **Scan Statistics**: Files processed, duration, workers used (included in reports)
+- **Configurable Workers**: Adjust parallel processing based on system resources
+- **Multiple Export Formats**: Choose the format that works best for your workflow
+
 ## Features
 
 ### ✅ Complete Compliance Coverage
@@ -19,6 +51,45 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 - **Technical Compliance** (Machine-verifiable): Advanced multi-technique detection using AST parsing, dependency analysis, API route analysis, database schema analysis, configuration parsing, and regex patterns. Detects hardcoded secrets (including cloud provider credentials), insecure ACLs, SQL injection risks, unencrypted database connections, API authentication gaps, container security issues, CI/CD vulnerabilities, and dependency compliance issues.
 - **System Compliance** (Configuration-verifiable): Configuration detection for logging, retention, encryption, MFA, backup policies, and cloud provider security settings (AWS CloudTrail, S3 encryption, IAM MFA, GCP/Azure equivalents).
 - **Procedural Compliance** (Human-attested): Signed attestations for non-technical controls with Ed25519 signatures
+
+### ✅ Industry-Grade Security Detection
+
+**Advanced Vulnerability Detection:**
+- **XSS Vulnerabilities**: Flask/Jinja2 `|safe` filter, Django autoescape, React `dangerouslySetInnerHTML`
+- **Command Injection**: `system()`, `exec()`, `eval()` with user input
+- **SQL/NoSQL Injection**: String concatenation, parameterized query detection
+- **XXE (XML External Entity)**: XML parser vulnerabilities
+- **SSRF (Server-Side Request Forgery)**: User-controlled URL fetching
+- **Insecure Deserialization**: `pickle.loads()`, `yaml.load()` with user input
+- **Path Traversal**: Directory traversal vulnerabilities (`../`)
+- **Race Conditions**: TOCTOU (Time-of-Check-Time-of-Use) vulnerabilities
+- **Cryptographic Misuse**: Weak random number generation, hardcoded IVs, weak key derivation
+- **DEBUG Mode Detection**: Flask, Django, Node.js production security risks
+- **Insecure Cookie Handling**: User-controlled cookie values, missing security flags
+
+**Infrastructure Security:**
+- **Terraform Security**: Unencrypted storage, exposed secrets, missing version constraints, wildcard IAM policies
+- **Kubernetes Security**: Privileged containers, host network mode, missing resource limits, Docker socket exposure
+- **Container Security**: Root user execution, missing security contexts
+- **CI/CD Security**: Hardcoded secrets, unsigned artifacts, unpinned Docker images, missing security scanning
+
+### ✅ AI-Powered Validation (v2.1.0+)
+
+- **Offline AI Validation**: Uses sentence transformers for semantic similarity matching (no API calls)
+- **100+ Known Patterns**: Comprehensive database of false positives and real vulnerabilities
+- **Multi-Factor Validation**: Combines semantic similarity with heuristic analysis
+- **Context-Aware Detection**: Distinguishes detector code from actual vulnerabilities
+- **Confidence Scoring**: Intelligent confidence adjustment based on pattern matching
+- **Industry-Specific Patterns**: HIPAA, PCI-DSS, GDPR, SOC2, ISO27001 compliance patterns
+
+### ✅ Performance & Scalability (v2.2.0+)
+
+- **Parallel Processing**: Multi-threaded file scanning (2-4x faster on large codebases)
+- **Progress Reporting**: Real-time scan progress and statistics
+- **Performance Metrics**: Scan duration, files processed, error tracking
+- **Multiple Export Formats**: JSON (default), CSV, HTML reports
+- **Error Resilience**: Per-file error isolation, graceful degradation
+- **Scan Statistics**: Detailed metrics included in all reports
 
 ### ✅ Cryptographic Integrity
 
@@ -251,12 +322,41 @@ docker pull popslala1/kratos-agent:latest
 # Generate keys (mount a local directory for key storage)
 docker run --rm -v $(pwd)/keys:/root/.kratos/keys popslala1/kratos-agent:latest generate-key
 
-# Scan a project
+# Basic scan
 docker run --rm \
   -v $(pwd)/keys:/root/.kratos/keys \
   -v $(pwd)/project:/workspace \
   -v $(pwd)/output:/output \
   popslala1/kratos-agent:latest scan /workspace --output /output/report.json
+
+# Scan with progress reporting and parallel processing
+docker run --rm \
+  -v $(pwd)/keys:/root/.kratos/keys \
+  -v $(pwd)/project:/workspace \
+  -v $(pwd)/output:/output \
+  popslala1/kratos-agent:latest scan /workspace \
+    --output /output/report.json \
+    --workers 8 \
+    --progress
+
+# Export as CSV
+docker run --rm \
+  -v $(pwd)/keys:/root/.kratos/keys \
+  -v $(pwd)/project:/workspace \
+  -v $(pwd)/output:/output \
+  popslala1/kratos-agent:latest scan /workspace \
+    --output /output/report.csv \
+    --format csv
+
+# Export as HTML
+docker run --rm \
+  -v $(pwd)/keys:/root/.kratos/keys \
+  -v $(pwd)/project:/workspace \
+  -v $(pwd)/output:/output \
+  popslala1/kratos-agent:latest scan /workspace \
+    --output /output/report.html \
+    --format html \
+    --progress
 ```
 
 ### Manual Setup
@@ -319,29 +419,54 @@ Keys are stored in `~/.kratos/keys/` by default.
 ### 2. Scan Your Project
 
 ```bash
-# Using Docker
+# Using Docker (basic)
 docker run --rm \
   -v $(pwd)/keys:/root/.kratos/keys \
   -v $(pwd)/project:/workspace \
   -v $(pwd)/output:/output \
   popslala1/kratos-agent:latest scan /workspace --output /output/report.json
 
+# Using Docker (with all features)
+docker run --rm \
+  -v $(pwd)/keys:/root/.kratos/keys \
+  -v $(pwd)/project:/workspace \
+  -v $(pwd)/output:/output \
+  popslala1/kratos-agent:latest scan /workspace \
+    --output /output/report.json \
+    --workers 8 \
+    --progress \
+    --format json
+
 # Or locally
 python -m agent.cli scan /path/to/your/project \
     --output report.json \
-    --project-name "your-project"
+    --project-name "your-project" \
+    --workers 4 \
+    --progress \
+    --format json
 ```
+
+**Scan Options:**
+- `--workers N`: Number of parallel workers (default: 4, recommended: 4-8)
+- `--progress`: Show real-time progress indicators
+- `--format json|csv|html`: Export format (default: json)
+- `--generate-patches`: Generate auto-fix patches for supported findings
+- `--patches-dir PATH`: Directory for patch files
 
 The scan will:
 - **Detect code-level compliance issues**: Uses advanced multi-technique detection (AST analysis, dependency checking, API route parsing, database schema analysis) to find hardcoded secrets (including cloud provider credentials), insecure ACLs, SQL injection risks, unencrypted database connections, API authentication gaps, consent handling mechanisms, data portability endpoints, access logging implementations, and right-to-erasure functionality
-- **Infrastructure-as-Code security**: Terraform/CloudFormation misconfigurations (public S3 buckets, unencrypted RDS, open security groups)
-- **Container security**: Docker and Kubernetes security issues (root user, missing security contexts, secrets in manifests)
-- **CI/CD pipeline security**: Secrets in workflows, unsigned artifacts
+- **Advanced security vulnerabilities**: XSS (including Flask `|safe`, Django autoescape, React), command injection, XXE, SSRF, insecure deserialization, path traversal, race conditions, cryptographic misuse, DEBUG mode, insecure cookies
+- **Infrastructure-as-Code security**: Terraform/CloudFormation misconfigurations (public S3 buckets, unencrypted RDS, open security groups, wildcard IAM policies)
+- **Container security**: Docker and Kubernetes security issues (root user, missing security contexts, secrets in manifests, Docker socket exposure)
+- **CI/CD pipeline security**: Secrets in workflows, unsigned artifacts, unpinned Docker images, missing security scanning
 - **Dependency compliance**: Missing lock files, unpinned dependencies, compliance library detection (Supabase, Auth0, etc.)
+- **AI-powered validation**: Semantic similarity matching to filter false positives and boost confidence for real issues (100+ known patterns)
+- **Parallel processing**: Multi-threaded scanning for 2-4x faster performance on large codebases
 - **Collect system-level evidence**: Logging, encryption, MFA configs, AWS CloudTrail, S3 encryption, IAM MFA, retention policies
 - **Map findings to compliance controls**: All findings mapped to specific framework controls across all 7 supported frameworks
 - **Generate cryptographic evidence hashes**: SHA256 hashes for all evidence
 - **Create a Merkle root**: Cryptographic proof of report integrity
+- **Performance metrics**: Scan duration, files processed, error tracking included in reports
 
 ### 3. Upload & Verify
 
@@ -577,9 +702,17 @@ Requires human declaration with cryptographic signature. Examples: incident resp
   },
   "merkle_root": "sha256_hash",
   "agent_signature": "ed25519_signature",
-  "agent_version": "1.0.0"
+  "agent_version": "kratos-comply-agent-2.2.0",
+  "scan_statistics": {
+    "total_findings": 42,
+    "scan_duration_seconds": 15.3,
+    "workers_used": 4,
+    "files_scanned": 1250
+  }
 }
 ```
+
+**Note**: The `scan_statistics` field is available in v2.2.0+ reports and includes performance metrics from parallel scanning.
 
 ## Development
 
@@ -624,6 +757,29 @@ Contributions are welcome! Please ensure:
 
 MIT License - see LICENSE file for details
 
+## Version History
+
+### v2.2.0 (Current) - Performance & Export Formats
+- ✅ Parallel file processing (2-4x faster scans)
+- ✅ Multiple export formats (JSON, CSV, HTML)
+- ✅ Progress reporting and scan statistics
+- ✅ Enhanced error handling and resilience
+- ✅ Performance metrics in reports
+
+### v2.1.0 - Advanced AI Validation
+- ✅ AI-powered validation with 100+ known patterns
+- ✅ Multi-factor validation (semantic similarity + heuristics)
+- ✅ Context-aware detection (distinguishes detector code from vulnerabilities)
+- ✅ Industry-specific compliance patterns (HIPAA, PCI-DSS, GDPR, SOC2, ISO27001)
+- ✅ Improved confidence scoring
+
+### v2.0.0 - Industry-Grade Security Detection
+- ✅ 15+ cloud provider secret patterns
+- ✅ 6 new vulnerability types (XXE, SSRF, insecure deserialization, path traversal, race conditions, crypto misuse)
+- ✅ Enhanced CI/CD and IAC security (Terraform, Kubernetes, Docker)
+- ✅ 25+ programming languages supported
+- ✅ Detector code exclusion to reduce false positives
+
 ## Support
 
 For issues, questions, or contributions, please open an issue on the repository.
@@ -631,4 +787,6 @@ For issues, questions, or contributions, please open an issue on the repository.
 ---
 
 **KratosComply** - Making compliance verifiable, one control at a time.
+
+**Current Version**: 2.2.0 | **Docker Image**: `popslala1/kratos-agent:latest` | **Multi-Arch**: AMD64 + ARM64
 

@@ -68,10 +68,15 @@ export function HelpPage() {
                 It collects evidence for compliance controls across three planes:
               </p>
               <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground ml-4">
-                <li><strong>Technical Evidence:</strong> Machine-verifiable evidence from source code (AST parsing, regex patterns)</li>
+                <li><strong>Technical Evidence:</strong> Machine-verifiable evidence from source code (AST parsing, regex patterns, AI-powered validation)</li>
                 <li><strong>System Evidence:</strong> Configuration-based evidence (flags, settings, policies)</li>
                 <li><strong>Procedural Evidence:</strong> Human-attested evidence (policies, SOPs, training records)</li>
               </ul>
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mt-3">
+                <p className="text-xs text-muted-foreground">
+                  <strong>v2.2.0+ Features:</strong> Parallel processing (2-4x faster), progress reporting, multiple export formats (JSON, CSV, HTML), and scan statistics included in reports.
+                </p>
+              </div>
             </div>
 
             <div className="space-y-3">

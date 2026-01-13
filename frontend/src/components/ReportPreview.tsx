@@ -43,6 +43,12 @@ export function ReportPreview() {
               <span>Path: {report.project.path}</span>
               <span>• Evidence Gaps: {report.findings.length}</span>
               <span>• Frameworks: {report.standards.join(", ")}</span>
+              {report.scan_statistics && (
+                <>
+                  <span>• Files: {report.scan_statistics.files_scanned || "N/A"}</span>
+                  <span>• Duration: {report.scan_statistics.scan_duration_seconds ? `${report.scan_statistics.scan_duration_seconds}s` : "N/A"}</span>
+                </>
+              )}
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -57,6 +63,13 @@ export function ReportPreview() {
           <MetricCard label="Merkle root" value={report.merkle_root} />
           <MetricCard label="Signature" value={`${report.agent_signature.slice(0, 24)}…`} />
         </div>
+        {report.scan_statistics && (
+          <div className="grid gap-4 md:grid-cols-3">
+            <MetricCard label="Agent Version" value={report.agent_version || "N/A"} />
+            <MetricCard label="Workers Used" value={report.scan_statistics.workers_used?.toString() || "N/A"} />
+            <MetricCard label="Scan Duration" value={report.scan_statistics.scan_duration_seconds ? `${report.scan_statistics.scan_duration_seconds}s` : "N/A"} />
+          </div>
+        )}
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             <AlertTriangle className="h-4 w-4" /> Evidence Gaps & Control Failures
