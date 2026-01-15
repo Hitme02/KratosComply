@@ -138,7 +138,7 @@ EXCLUDED_FILENAMES = {"aegis-report.json", "report.json", "*.pyc", "*.pyo", "*.c
 IAC_EXTENSIONS = {".tf", ".tf.json", ".json", ".yaml", ".yml", ".hcl", ".tfvars"}
 SECRET_TEXT_EXTENSIONS = {".env", ".ini", ".cfg", ".conf", ".txt", ".json", ".yaml", ".yml", ".properties", ".toml", ".config"}
 
-AGENT_VERSION = "kratos-comply-agent-2.3.0"  # Improved accuracy: Java Spring SQL injection, template XSS, better false positive reduction
+AGENT_VERSION = "kratos-comply-agent-2.4.0"  # Frontend security, config scanning, .kratosignore, SARIF export
 
 SEVERITY_WEIGHTS = {
     "critical": 30,

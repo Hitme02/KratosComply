@@ -75,7 +75,30 @@ SECRET_REGEX = re.compile(
 )
 
 
-def _should_skip(path: Path) -> bool:
+def _load_ignore_file(root: Path, ignore_file: Path | None = None) -> set[str]:
+    """Load .kratosignore file patterns for exclusion."""
+    ignore_patterns = set()
+    
+    # Check for .kratosignore in root or specified path
+    if ignore_file:
+        ignore_path = Path(ignore_file).expanduser()
+    else:
+        ignore_path = root / ".kratosignore"
+    
+    if ignore_path.exists():
+        try:
+            ignore_content = ignore_path.read_text(encoding="utf-8", errors="ignore")
+            for line in ignore_content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    ignore_patterns.add(line)
+        except Exception:
+            logger.debug(f"Could not read ignore file: {ignore_path}")
+    
+    return ignore_patterns
+
+
+def _should_skip(path: Path, ignore_patterns: set[str] | None = None) -> bool:
     """Skip excluded directories and files."""
     parts = path.parts
     for excluded in EXCLUDED_DIRS:
@@ -86,6 +109,27 @@ def _should_skip(path: Path) -> bool:
     for pattern in EXCLUDED_FILENAMES:
         if pattern.endswith("*") and path.name.startswith(pattern[:-1]):
             return True
+    
+    # Check .kratosignore patterns
+    if ignore_patterns:
+        path_str = str(path)
+        for pattern in ignore_patterns:
+            # Simple glob-like matching
+            if pattern.startswith('**/'):
+                pattern = pattern[3:]
+            if pattern.startswith('/'):
+                pattern = pattern[1:]
+            
+            # Match directory or file
+            if pattern in path_str or path.name == pattern:
+                return True
+            
+            # Simple wildcard matching
+            if '*' in pattern:
+                import fnmatch
+                if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
+                    return True
+    
     return False
 
 
@@ -203,7 +247,7 @@ def _relative_path(path: Path, root: Path) -> str:
         return str(path)
 
 
-def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False) -> list[RawFinding]:
+def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False, ignore_file: Path | None = None) -> list[RawFinding]:
     """Scan workspace for compliance control violations and evidence gaps.
     
     Returns findings that represent specific compliance framework violations,
@@ -230,8 +274,11 @@ def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False
     file_count = 0
     error_count = 0
     
+    # Load .kratosignore patterns if available
+    ignore_patterns = _load_ignore_file(root, ignore_file)
+    
     # Collect all files first for progress tracking
-    all_files = list(_iter_files(root))
+    all_files = list(_iter_files(root, ignore_patterns))
     total_files = len(all_files)
     
     if show_progress:
@@ -311,6 +358,8 @@ def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False
     findings.extend(_scan_database_security(root))
     findings.extend(_scan_cicd_security(root))
     findings.extend(_scan_dependencies(root))
+    findings.extend(_scan_frontend_security(root))  # Frontend security (sessionStorage, localStorage)
+    findings.extend(_scan_configuration_security(root))  # Config files (CORS, database encryption)
     
     # Security vulnerability detection (not just compliance)
     findings.extend(_scan_weak_encryption(root))
@@ -354,10 +403,10 @@ def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False
     return findings
 
 
-def _iter_files(root: Path) -> Iterable[Path]:
+def _iter_files(root: Path, ignore_patterns: set[str] | None = None) -> Iterable[Path]:
     """Iterate over all files in the workspace, excluding skipped paths."""
     for path in root.rglob("*"):
-        if path.is_file() and not _should_skip(path):
+        if path.is_file() and not _should_skip(path, ignore_patterns):
             yield path
 
 
@@ -835,8 +884,8 @@ def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
     """Scan for cloud provider secrets (AWS, GCP, Azure, etc.)."""
     findings: list[RawFinding] = []
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         try:
@@ -929,8 +978,12 @@ def _scan_container_security(root: Path) -> list[RawFinding]:
     """Scan container configuration files for security issues."""
     findings: list[RawFinding] = []
     
+    # Also scan docker-compose files by name
+    docker_compose_names = ["docker-compose.yml", "docker-compose.yaml", "docker-compose.json", "compose.yml", "compose.yaml"]
+    
     for file_path in _iter_files(root):
-        if file_path.suffix not in (".yaml", ".yml", ".json"):
+        # Scan YAML/JSON files and docker-compose files
+        if file_path.suffix not in (".yaml", ".yml", ".json") and file_path.name not in docker_compose_names:
             continue
         
         if "docker" not in file_path.name.lower() and "kubernetes" not in file_path.name.lower() and "k8s" not in file_path.name.lower():
@@ -963,16 +1016,26 @@ def _scan_container_security(root: Path) -> list[RawFinding]:
                 confidence=0.9,
             ))
         
-        # Check for Docker socket exposure
-        if re.search(r'/var/run/docker\.sock', content):
-            findings.append(RawFinding(
-                type="insecure_acl",
-                file=_relative_path(file_path, root),
-                line=None,
-                snippet="Docker socket exposed to container",
-                severity="high",
-                confidence=0.9,
-            ))
+        # Check for Docker socket exposure (improved patterns for docker-compose)
+        docker_socket_patterns = [
+            r'/var/run/docker\.sock',
+            r'docker\.sock:/var/run/docker\.sock',
+            r'- /var/run/docker\.sock:/var/run/docker\.sock',
+            r'volumes:\s*-\s*["\']?/var/run/docker\.sock',
+            r'hostPath:\s*path:\s*["\']?/var/run/docker\.sock',
+        ]
+        for pattern in docker_socket_patterns:
+            if re.search(pattern, content):
+                findings.append(RawFinding(
+                    type="insecure_acl",
+                    file=_relative_path(file_path, root),
+                    line=None,
+                    snippet="Docker socket exposed to container",
+                    severity="high",
+                    confidence=0.9,
+                    metadata={"control_id": "SOC2-CC6.1", "compliance_frameworks": ["SOC2", "ISO27001"]}
+                ))
+                break
         
         # Check for missing security context
         if "securityContext" not in content and "SecurityContext" not in content:
@@ -1079,6 +1142,30 @@ def _scan_database_security(root: Path) -> list[RawFinding]:
                 severity="high",
                 confidence=0.85,
             ))
+        
+        # Check for SQLite without encryption (SQLite databases are unencrypted by default)
+        sqlite_patterns = [
+            r'sqlite:///',
+            r'sqlite://',
+            r'SQLALCHEMY_DATABASE_URI.*sqlite',
+            r'DATABASE_URL.*sqlite',
+            r'DATABASE.*sqlite',
+            r'driver.*=.*sqlite',
+        ]
+        for pattern in sqlite_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                # Check if encryption is mentioned (WAL mode doesn't count as encryption)
+                if 'encrypt' not in content.lower() and 'sqlcipher' not in content.lower():
+                    findings.append(RawFinding(
+                        type="unencrypted_database",
+                        file=_relative_path(file_path, root),
+                        line=None,
+                        snippet="SQLite database without encryption (GDPR Article 32, SOC2-CC6.1)",
+                        severity="high",
+                        confidence=0.9,
+                        metadata={"control_id": "SOC2-CC6.1", "compliance_frameworks": ["GDPR", "SOC2", "HIPAA"]}
+                    ))
+                    break
     
     return findings
 
@@ -1278,8 +1365,8 @@ def _scan_weak_encryption(root: Path) -> list[RawFinding]:
         (r"context\.verify_mode\s*=\s*ssl\.CERT_NONE", "SSL certificate verification disabled"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Focus on code files
@@ -1382,8 +1469,8 @@ def _scan_injection_vulnerabilities(root: Path) -> list[RawFinding]:
         (r'\.find\s*\(\s*\{[^}]*[a-zA-Z_]+[^}]*\+', "String concatenation in MongoDB find query object"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Focus on code files
@@ -1464,8 +1551,8 @@ def _scan_weak_authentication(root: Path) -> list[RawFinding]:
         (r'app\.config\[["\']SECRET_KEY["\']\]\s*=\s*["\']([^"\']{10,})["\']', "Flask SECRET_KEY hardcoded in config"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Focus on code files
@@ -1574,8 +1661,8 @@ def _scan_missing_logging(root: Path) -> list[RawFinding]:
         r'Logger\.',
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Focus on code files
@@ -1823,8 +1910,8 @@ def _scan_missing_logging(root: Path) -> list[RawFinding]:
         r'Logger\.',
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Focus on code files
@@ -1907,8 +1994,8 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
         (r'eval\s*\(\s*[a-zA-Z_]+[^)]*\)', "Code injection via eval() with variable"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb"):
@@ -1987,8 +2074,10 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
         # Django: {% autoescape off %} or |safe filter
         (r'\{%\s*autoescape\s+off\s*%\}', "XSS: Autoescape disabled in Django template"),
         # Thymeleaf (Java Spring): th:utext - unescaped text (CRITICAL)
-        (r'th:utext\s*=\s*["\']?\{[^}]+\}', "XSS: Thymeleaf th:utext with unescaped expression (Java Spring) - CRITICAL"),
         (r'th:utext\s*=\s*["\']?\$\{[^}]+\}', "XSS: Thymeleaf th:utext with unescaped expression (Java Spring) - CRITICAL"),
+        (r'th:utext\s*=\s*["\']\{[^}]+\}', "XSS: Thymeleaf th:utext with unescaped expression (Java Spring) - CRITICAL"),
+        (r'<[^>]*th:utext\s*=\s*["\']?\$\{[^}]+\}[^>]*>', "XSS: Thymeleaf th:utext attribute with unescaped expression (Java Spring) - CRITICAL"),
+        (r'<[^>]*th:utext\s*=\s*["\']\{[^}]+\}[^>]*>', "XSS: Thymeleaf th:utext attribute with unescaped expression (Java Spring) - CRITICAL"),
         # Jinja2: {{ variable }} without escaping (when in unsafe context)
         (r'\{\{\s*[a-zA-Z_]+\s*\}\}(?!.*\|escape)(?!.*\|e)(?!.*\|safe)', "XSS: Jinja2 template variable without explicit escaping"),
         # Thymeleaf: [[${variable}]] - unescaped inline text
@@ -2007,8 +2096,8 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
         (r'escape\s*=\s*False', "XSS: escape=False in template rendering"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".php", ".rb", ".html", ".htm", ".jsp", ".erb", ".java", ".xml"):
@@ -2095,24 +2184,28 @@ def _scan_debug_mode(root: Path) -> list[RawFinding]:
     findings: list[RawFinding] = []
     
     debug_patterns = [
-        # Flask
+        # Flask - more specific patterns
         (r'app\.config\[["\']DEBUG["\']\]\s*=\s*True', "DEBUG mode enabled in Flask (production risk)"),
+        (r'app\.config\[["\']debug["\']\]\s*=\s*True', "DEBUG mode enabled in Flask (lowercase key)"),
         (r'DEBUG\s*=\s*True', "DEBUG mode enabled (Flask/Django)"),
+        (r'debug\s*=\s*True', "DEBUG mode enabled (lowercase)"),
         (r'FLASK_ENV\s*=\s*["\']development["\']', "Flask environment set to development"),
         (r'FLASK_DEBUG\s*=\s*1', "Flask DEBUG enabled"),
+        (r'FLASK_DEBUG\s*=\s*True', "Flask DEBUG enabled (True)"),
         # Django
         (r'DEBUG\s*=\s*True', "DEBUG mode enabled in Django settings"),
         (r'ALLOWED_HOSTS\s*=\s*\[\s*["\']\*["\']', "Django ALLOWED_HOSTS set to * (insecure)"),
         # Node.js/Express
         (r'process\.env\.NODE_ENV\s*!=\s*["\']production["\']', "Node.js not in production mode"),
         (r'debug\s*:\s*true', "Debug mode enabled (Express/Node.js)"),
+        (r'NODE_ENV\s*=\s*["\']development["\']', "Node.js environment set to development"),
         # General
         (r'environment\s*=\s*["\']dev["\']', "Environment set to development"),
         (r'environment\s*=\s*["\']development["\']', "Environment set to development"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Skip detector code
@@ -2162,9 +2255,13 @@ def _scan_insecure_cookies(root: Path) -> list[RawFinding]:
     findings: list[RawFinding] = []
     
     insecure_cookie_patterns = [
-        # Flask: set_cookie with user input
+        # Flask: set_cookie with user input (improved patterns)
         (r'response\.set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+', "Insecure cookie: user-controlled value (Flask)"),
         (r'set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*request\.', "Insecure cookie: request data in cookie value (Flask)"),
+        (r'\.set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+', "Insecure cookie: user-controlled value (Flask/Django)"),
+        # More specific: response.set_cookie('name', name) where name is a variable
+        (r'response\.set_cookie\s*\(\s*["\']([^"\']+)["\']\s*,\s*\1\s*\)', "Insecure cookie: cookie name and value are the same variable (Flask)"),
+        (r'response\.set_cookie\s*\(\s*["\']([^"\']+)["\']\s*,\s*([a-zA-Z_]+)\s*\)', "Insecure cookie: user-controlled value in cookie (Flask)"),
         # Django: set_cookie with user input
         (r'response\.set_cookie\s*\(\s*["\'][^"\']+["\']\s*,\s*[a-zA-Z_]+', "Insecure cookie: user-controlled value (Django)"),
         # Missing secure flag
@@ -2178,8 +2275,8 @@ def _scan_insecure_cookies(root: Path) -> list[RawFinding]:
         (r'res\.cookie\s*\([^)]*\)(?!.*httpOnly\s*:\s*true)', "Cookie set without httpOnly flag (Express)"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Skip detector code
@@ -2311,8 +2408,8 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
         (r'api[_-]?key["\']?\s*:\s*["\']?[^"\']+["\']?', "API key in object/header"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml", ".json", ".env"):
@@ -2460,8 +2557,8 @@ def _scan_authentication_security(root: Path) -> list[RawFinding]:
         (r'@app\.(post|put)\([^)]*["\']/auth["\']', "Auth endpoint without rate limiting"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
@@ -2564,8 +2661,8 @@ def _scan_access_control_issues(root: Path) -> list[RawFinding]:
         (r'if\s*\(.*user.*\)\s*\{[^}]*delete|update|modify', "Operation without role check"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
@@ -2666,8 +2763,8 @@ def _scan_logging_security(root: Path) -> list[RawFinding]:
         (r'log\.(info|error|warn)\([^)]*ssn|social.*security', "SSN in log statement"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go"):
@@ -2744,8 +2841,8 @@ def _scan_encryption_security(root: Path) -> list[RawFinding]:
         (r'error\([^)]*password', "Password in error message"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml"):
@@ -2831,8 +2928,8 @@ def _scan_insecure_configurations(root: Path) -> list[RawFinding]:
         (r'session.*cookie.*secure\s*=\s*False', "Session cookie not secure"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         if file_path.suffix not in (".py", ".js", ".ts", ".java", ".cs", ".php", ".rb", ".go", ".yaml", ".yml", ".json", ".conf", ".ini"):
@@ -2929,8 +3026,8 @@ def _scan_supply_chain_security(root: Path) -> list[RawFinding]:
         (r'npm.*registry.*http://', "Insecure npm registry"),
     ]
     
-    for file_path in _iter_files(root):
-        if _should_skip(file_path):
+            for file_path in _iter_files(root, ignore_patterns):
+        if _should_skip(file_path, ignore_patterns):
             continue
         
         # Check CI/CD files
@@ -2982,5 +3079,164 @@ def _scan_supply_chain_security(root: Path) -> list[RawFinding]:
                         metadata={"issue": description, "vulnerability": "insecure_registry"}
                     ))
                     break
+    
+    return findings
+
+
+def _scan_frontend_security(root: Path) -> list[RawFinding]:
+    """Scan frontend code for security issues (sessionStorage, localStorage, insecure token storage)."""
+    findings: list[RawFinding] = []
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path):
+            continue
+        
+        # Focus on frontend code files
+        if file_path.suffix not in (".js", ".ts", ".jsx", ".tsx", ".vue"):
+            continue
+        
+        # Skip detector code
+        if _is_detector_code(file_path):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # Frontend security patterns
+        frontend_security_patterns = [
+            # Insecure token storage in sessionStorage
+            (r'sessionStorage\.setItem\s*\([^)]*token[^)]*\)', "Insecure token storage: tokens in sessionStorage (XSS risk)"),
+            (r'sessionStorage\.setItem\s*\([^)]*access[^)]*token[^)]*\)', "Insecure token storage: access tokens in sessionStorage (XSS risk)"),
+            (r'sessionStorage\.[^=]+=\s*[a-zA-Z_]*token', "Insecure token storage: tokens assigned to sessionStorage (XSS risk)"),
+            # Insecure token storage in localStorage
+            (r'localStorage\.setItem\s*\([^)]*token[^)]*\)', "Insecure token storage: tokens in localStorage (XSS risk)"),
+            (r'localStorage\.setItem\s*\([^)]*secret[^)]*\)', "Insecure secret storage: secrets in localStorage (XSS risk)"),
+            # GitHub token in sessionStorage (specific case from evaluation report)
+            (r'sessionStorage\.setItem\s*\([^)]*github[^)]*token[^)]*\)', "Insecure GitHub token storage: tokens in sessionStorage (SOC2-CC6.2, GDPR Article 32)"),
+            (r'sessionStorage\.setItem\s*\([^)]*github[^)]*access[^)]*\)', "Insecure GitHub access token storage: tokens in sessionStorage"),
+            # Insecure API key storage
+            (r'(sessionStorage|localStorage)\.setItem\s*\([^)]*api[^)]*key[^)]*\)', "Insecure API key storage: API keys in browser storage"),
+        ]
+        
+        for pattern, description in frontend_security_patterns:
+            for line_no, line in enumerate(lines, start=1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    stripped = line.strip()
+                    if stripped.startswith(('//', '/*', '*')):
+                        continue
+                    
+                    findings.append(RawFinding(
+                        type="insecure_secret_storage",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="high",
+                        confidence=0.9,
+                        metadata={
+                            "issue": description,
+                            "control_id": "SOC2-CC6.2",
+                            "compliance_frameworks": ["SOC2", "GDPR", "PCI-DSS"],
+                            "vulnerability_type": "frontend_secret_storage"
+                        }
+                    ))
+                    break  # Only report once per file per pattern
+    
+    return findings
+
+
+def _scan_configuration_security(root: Path) -> list[RawFinding]:
+    """Scan configuration files for security issues (CORS, database encryption, etc.)."""
+    findings: list[RawFinding] = []
+    
+    config_file_patterns = [
+        "docker-compose.yml", "docker-compose.yaml", "compose.yml",
+        "settings.py", "config.py", "database.py", ".env", ".env.example"
+    ]
+    
+    for file_path in _iter_files(root):
+        if _should_skip(file_path, None):
+            continue
+        
+        # Check config files by name or extension
+        is_config_file = file_path.name in config_file_patterns or file_path.suffix in (".env", ".conf", ".config", ".ini")
+        
+        # Also check Python config files
+        if file_path.suffix == ".py" and ("config" in file_path.name.lower() or "settings" in file_path.name.lower() or "database" in file_path.name.lower()):
+            is_config_file = True
+        
+        if not is_config_file:
+            continue
+        
+        # Skip detector code
+        if _is_detector_code(file_path):
+            continue
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        
+        lines = content.splitlines()
+        
+        # CORS configuration issues
+        for line_no, line in enumerate(lines, start=1):
+            # CORS allowing all origins (wildcard)
+            if re.search(r'CORS\([^)]*allow_origins\s*=\s*\[?\s*["\']\*["\']', line, re.IGNORECASE):
+                findings.append(RawFinding(
+                    type="insecure_configuration",
+                    file=_relative_path(file_path, root),
+                    line=line_no,
+                    snippet=line.strip()[:200],
+                    severity="medium",
+                    confidence=0.85,
+                    metadata={
+                        "issue": "CORS allows all origins (wildcard)",
+                        "control_id": "SOC2-CC6.1",
+                        "compliance_frameworks": ["SOC2"],
+                        "vulnerability_type": "cors_misconfiguration"
+                    }
+                ))
+                break
+            
+            # CORS with hardcoded localhost (development pattern)
+            if re.search(r'allow_origins\s*=\s*\[?\s*["\']http://localhost', line, re.IGNORECASE):
+                if 'production' not in content.lower() and 'os.getenv' not in content and 'os.environ' not in content:
+                    findings.append(RawFinding(
+                        type="insecure_configuration",
+                        file=_relative_path(file_path, root),
+                        line=line_no,
+                        snippet=line.strip()[:200],
+                        severity="low",
+                        confidence=0.7,
+                        metadata={
+                            "issue": "CORS hardcoded to localhost (should be configurable for production)",
+                            "control_id": "SOC2-CC6.1",
+                            "compliance_frameworks": ["SOC2"],
+                            "vulnerability_type": "cors_misconfiguration",
+                            "note": "Acceptable for development but should be configurable"
+                        }
+                    ))
+                    break
+        
+        # Database encryption check (SQLite without encryption)
+        if re.search(r'sqlite:///', content, re.IGNORECASE):
+            if 'encrypt' not in content.lower() and 'sqlcipher' not in content.lower():
+                findings.append(RawFinding(
+                    type="unencrypted_database",
+                    file=_relative_path(file_path, root),
+                    line=None,
+                    snippet="SQLite database configuration without encryption",
+                    severity="high",
+                    confidence=0.9,
+                    metadata={
+                        "control_id": "SOC2-CC6.1",
+                        "compliance_frameworks": ["GDPR", "SOC2", "HIPAA"],
+                        "vulnerability_type": "database_encryption"
+                    }
+                ))
     
     return findings

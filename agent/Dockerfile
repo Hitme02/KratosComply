@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="KratosComply Team"
 LABEL description="KratosComply Compliance Agent - Offline-first compliance evidence scanner"
-LABEL version="2.3.0"
+LABEL version="2.4.0"
 
 WORKDIR /app
 

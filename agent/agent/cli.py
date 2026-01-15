@@ -78,7 +78,12 @@ def scan(
         "json",
         "--format",
         "-f",
-        help="Output format: json, csv, or html (default: json)",
+        help="Output format: json, csv, html, or sarif (default: json)",
+    ),
+    ignore_file: Optional[str] = typer.Option(
+        None,
+        "--ignore-file",
+        help="Path to .kratosignore file for exclusion patterns",
     ),
 ) -> None:
     """Scan a workspace, build a report, and sign it."""
@@ -94,8 +99,8 @@ def scan(
     if not path.is_dir():
         raise typer.BadParameter("Scan target must be a directory")
     
-    if format not in ("json", "csv", "html"):
-        raise typer.BadParameter(f"Invalid format: {format}. Must be json, csv, or html")
+    if format not in ("json", "csv", "html", "sarif"):
+        raise typer.BadParameter(f"Invalid format: {format}. Must be json, csv, html, or sarif")
 
     try:
         signing_key = load_signing_key(keystore_path)
@@ -104,7 +109,8 @@ def scan(
     
     # Pass workers and progress to scan_workspace
     from .detectors import scan_workspace
-    raw_findings = scan_workspace(path, max_workers=workers, show_progress=progress)
+    ignore_path = Path(ignore_file).expanduser() if ignore_file else None
+    raw_findings = scan_workspace(path, max_workers=workers, show_progress=progress, ignore_file=ignore_path)
     
     # Generate report with raw findings
     findings, raw_lookup, report = generate_report(path, project_name, raw_findings=raw_findings)
@@ -130,6 +136,8 @@ def scan(
         _export_csv(findings, output_path)
     elif format == "html":
         _export_html(findings, report, output_path)
+    elif format == "sarif":
+        _export_sarif(findings, report, output_path)
     
     typer.echo(f"Report written to {output_path} ({format.upper()})")
     typer.echo(
@@ -285,6 +293,61 @@ def _export_html(findings: list, report: dict, output_path: Path) -> None:
 """
     
     output_path.write_text(html, encoding="utf-8")
+
+
+def _export_sarif(findings: list, report: dict, output_path: Path) -> None:
+    """Export findings to SARIF format for tool integration."""
+    from .findings import Finding
+    
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "KratosComply",
+                    "version": report.get("agent_version", "unknown"),
+                    "informationUri": "https://github.com/your-org/kratos-compliance"
+                }
+            },
+            "results": []
+        }]
+    }
+    
+    severity_map = {
+        "critical": "error",
+        "high": "error",
+        "medium": "warning",
+        "low": "note"
+    }
+    
+    for finding in findings:
+        if isinstance(finding, Finding):
+            sarif_finding = {
+                "ruleId": finding.control_id or finding.type,
+                "level": severity_map.get(finding.severity.lower(), "warning"),
+                "message": {
+                    "text": finding.snippet[:500] if finding.snippet else finding.type
+                },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": finding.file.replace("\\", "/")
+                        },
+                        "region": {
+                            "startLine": finding.line or 1,
+                            "startColumn": 1
+                        }
+                    }
+                }],
+                "properties": {
+                    "confidence": finding.confidence,
+                    "compliance_frameworks": finding.compliance_frameworks_affected or []
+                }
+            }
+            sarif["runs"][0]["results"].append(sarif_finding)
+    
+    output_path.write_text(json.dumps(sarif, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
