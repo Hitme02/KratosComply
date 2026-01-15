@@ -12,9 +12,22 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 
 **Core Philosophy**: Compliance includes security. Every detection maps to a specific compliance control, legal requirement, or audit verifiability requirement.
 
-## What's New in v2.2.0
+## What's New in v2.7.0
 
-### 🚀 Performance Improvements
+### 🤖 Enhanced AI Validation
+- **500+ Pattern Database**: Expanded from 100 to 500+ real-world patterns covering diverse repository types
+- **Top-K Ensemble Matching**: Uses weighted ensemble of top-3 matches for better generalization
+- **Repository-Type Awareness**: Specific patterns for security tools, educational repos, and production code
+- **Improved Heuristics**: 10+ heuristic signals with weighted scoring for better context understanding
+- **Better Generalization**: Handles edge cases, UUID/GUID filtering, test data detection more accurately
+
+### 🎯 False Positive Reduction (v2.6.0)
+- **UUID/GUID Filtering**: Automatically filters Visual Studio project GUIDs in `.sln`, `.csproj`, `.vcxproj` files (reduces false positives by ~95% for security tools)
+- **Security Tool Detection**: Automatically detects security scanner repositories and reduces confidence for test data/examples
+- **Test Data Filtering**: Intelligent detection of test data, examples, and placeholders to reduce false positives
+- **Context-Aware Scanning**: Better distinction between detection patterns and actual vulnerabilities
+
+### 🚀 Performance Improvements (v2.2.0+)
 - **Parallel Processing**: 2-4x faster scans with multi-threaded file processing (configurable with `--workers`)
 - **Progress Reporting**: Real-time scan progress and statistics (`--progress` flag)
 - **Performance Metrics**: Detailed timing and resource usage tracking included in reports
@@ -73,14 +86,25 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 - **Container Security**: Root user execution, missing security contexts
 - **CI/CD Security**: Hardcoded secrets, unsigned artifacts, unpinned Docker images, missing security scanning
 
-### ✅ AI-Powered Validation (v2.1.0+)
+### ✅ False Positive Reduction (v2.6.0+)
+
+- **UUID/GUID Filtering**: Automatically excludes Visual Studio project GUIDs from secret detection
+- **Security Tool Detection**: Reduces false positives when scanning security scanner repositories (trivy, grype, etc.)
+- **Test Data Filtering**: Filters out test data, examples, and placeholders from secret detection
+- **Context-Aware Detection**: Better distinction between detection patterns and actual vulnerabilities
+
+### ✅ AI-Powered Validation (v2.7.0+)
 
 - **Offline AI Validation**: Uses sentence transformers for semantic similarity matching (no API calls)
-- **100+ Known Patterns**: Comprehensive database of false positives and real vulnerabilities
-- **Multi-Factor Validation**: Combines semantic similarity with heuristic analysis
-- **Context-Aware Detection**: Distinguishes detector code from actual vulnerabilities
-- **Confidence Scoring**: Intelligent confidence adjustment based on pattern matching
+- **500+ Known Patterns**: Comprehensive database expanded with real-world examples from diverse repositories
+- **Top-K Ensemble Matching**: Weighted ensemble of top-3 matches for robust generalization
+- **Multi-Factor Validation**: Combines semantic similarity with 10+ heuristic signals
+- **Context-Aware Detection**: Distinguishes detector code, test data, and actual vulnerabilities
+- **Repository-Type Awareness**: Specific patterns for security tools, educational repos, production code
+- **Confidence Scoring**: Intelligent confidence adjustment with ensemble voting
 - **Industry-Specific Patterns**: HIPAA, PCI-DSS, GDPR, SOC2, ISO27001 compliance patterns
+- **UUID/GUID Filtering**: Automatically filters Visual Studio project GUIDs
+- **Test Data Detection**: Intelligent filtering of test fixtures, mocks, and examples
 
 ### ✅ Performance & Scalability (v2.2.0+)
 

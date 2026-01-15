@@ -138,7 +138,7 @@ EXCLUDED_FILENAMES = {"aegis-report.json", "report.json", "*.pyc", "*.pyo", "*.c
 IAC_EXTENSIONS = {".tf", ".tf.json", ".json", ".yaml", ".yml", ".hcl", ".tfvars"}
 SECRET_TEXT_EXTENSIONS = {".env", ".ini", ".cfg", ".conf", ".txt", ".json", ".yaml", ".yml", ".properties", ".toml", ".config"}
 
-AGENT_VERSION = "kratos-comply-agent-2.4.0"  # Frontend security, config scanning, .kratosignore, SARIF export
+AGENT_VERSION = "kratos-comply-agent-2.7.0"  # Enhanced AI: 500+ patterns, top-k ensemble matching, improved generalization
 
 SEVERITY_WEIGHTS = {
     "critical": 30,

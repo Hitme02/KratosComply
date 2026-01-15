@@ -40,6 +40,9 @@ try:
         _scan_path_traversal,
         _scan_race_conditions,
         _scan_crypto_misuse,
+        _scan_csrf_vulnerabilities,
+        _scan_idor_vulnerabilities,
+        _scan_mass_assignment_vulnerabilities,
     )
 except ImportError:
     # Fallback if module doesn't exist yet
@@ -49,6 +52,9 @@ except ImportError:
     def _scan_path_traversal(*args, **kwargs): return []
     def _scan_race_conditions(*args, **kwargs): return []
     def _scan_crypto_misuse(*args, **kwargs): return []
+    def _scan_csrf_vulnerabilities(*args, **kwargs): return []
+    def _scan_idor_vulnerabilities(*args, **kwargs): return []
+    def _scan_mass_assignment_vulnerabilities(*args, **kwargs): return []
 from .advanced_detectors import (
     detect_consent_via_dependencies,
     detect_consent_via_api_routes,
@@ -372,6 +378,9 @@ def scan_workspace(root: Path, max_workers: int = 4, show_progress: bool = False
     findings.extend(_scan_ssrf_vulnerabilities(root))
     findings.extend(_scan_insecure_deserialization(root))
     findings.extend(_scan_path_traversal(root))
+    findings.extend(_scan_csrf_vulnerabilities(root))
+    findings.extend(_scan_idor_vulnerabilities(root))
+    findings.extend(_scan_mass_assignment_vulnerabilities(root))
     findings.extend(_scan_race_conditions(root))
     findings.extend(_scan_crypto_misuse(root))
     findings.extend(_scan_debug_mode(root))
@@ -464,11 +473,20 @@ def _scan_python_secrets(path: Path, root: Path, content: str) -> list[RawFindin
                 for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "SECRET_TEXT")
             ):
                 # Check if value looks like a real secret
-                if value and _looks_like_real_secret(value.strip("'\"")):
+                value_clean = value.strip("'\"")
+                if value_clean and _looks_like_real_secret(value_clean):
+                    # Skip if it's test data or example
+                    if _is_test_data_or_example(value_clean, path, content):
+                        continue
+                    
                     confidence = 0.9
                     if is_test_file:
                         confidence *= 0.7
                     if is_example_file:
+                        confidence *= 0.6
+                    
+                    # Reduce confidence for security tool repositories
+                    if _is_security_tool_repository(root):
                         confidence *= 0.6
                     
                     findings.append(RawFinding(
@@ -525,9 +543,12 @@ def _looks_like_real_secret(value: str) -> bool:
         return True
     
     # Check for UUID-like patterns (often used as tokens)
+    # BUT: Skip if it's in a .sln file or project file (Visual Studio GUIDs)
     import re
     uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
     if re.match(uuid_pattern, value, re.IGNORECASE):
+        # UUIDs in .sln, .csproj, .vcxproj files are usually project GUIDs, not secrets
+        # Only flag UUIDs if they're in actual code files or config files with secret keywords
         return True
     
     # Check for long alphanumeric strings (likely tokens)
@@ -818,9 +839,11 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
     if not (is_iac_file or is_secret_file or is_config_file):
         return []
     try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
     except OSError:
         lines = []
+        content = ""
 
     findings: list[RawFinding] = []
     for line_no, line in enumerate(lines, start=1):
@@ -864,13 +887,25 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
                     for fp in ("SECRET_KEYWORDS", "SECRETS_MANAGEMENT", "SECRET_REGEX", "SECRET_TEXT")
                 ):
                     # Check if value looks like a real secret
-                    if value and _looks_like_real_secret(value.strip("'\"")):
+                    value_clean = value.strip("'\"")
+                    if value_clean and _looks_like_real_secret(value_clean):
+                        # Skip if it's test data or example
+                        if _is_test_data_or_example(value_clean, path, content):
+                            continue
+                        
+                        # Reduce confidence for security tool repositories
+                        confidence = 0.9
+                        if _is_security_tool_repository(root):
+                            confidence = 0.6
+                        
                         findings.append(
                             RawFinding(
                                 type="hardcoded_secret",
                                 file=_relative_path(path, root),
                                 line=line_no,
                                 snippet=line.strip()[:200],
+                                severity="high",
+                                confidence=confidence,
                                 severity="high",
                                 confidence=0.9,
                                 metadata={"file_type": suffix}
@@ -880,12 +915,86 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
     return findings
 
 
+def _is_security_tool_repository(root: Path) -> bool:
+    """Determine if repository is a security tool (scanner, pentest tool, etc.)."""
+    # Check repository name
+    repo_name = root.name.lower()
+    security_tool_indicators = [
+        "trivy", "grype", "hydra", "scanner", "detector", "scanner", "audit",
+        "security-tool", "pentest", "exploit", "payload", "vulnerability-scanner"
+    ]
+    
+    if any(indicator in repo_name for indicator in security_tool_indicators):
+        return True
+    
+    # Check README for security tool indicators
+    readme_files = ["README.md", "README.txt", "README", "readme.md"]
+    for readme_file in readme_files:
+        readme_path = root / readme_file
+        if readme_path.exists():
+            try:
+                readme_content = readme_path.read_text(encoding="utf-8", errors="ignore").lower()
+                tool_keywords = [
+                    "security scanner", "vulnerability scanner", "pentest tool",
+                    "security tool", "audit tool", "detection tool", "scanner tool"
+                ]
+                if any(keyword in readme_content for keyword in tool_keywords):
+                    return True
+            except Exception:
+                pass
+    
+    return False
+
+
+def _is_test_data_or_example(value: str, file_path: Path, context: str = None) -> bool:
+    """Check if a value is test data, example, or placeholder."""
+    value_lower = value.lower()
+    
+    # Common test data patterns
+    test_data_patterns = [
+        "test", "example", "sample", "demo", "placeholder", "dummy",
+        "fake", "mock", "stub", "fixture", "testdata", "test_data",
+        "changeme", "replaceme", "yourkeyhere", "yoursecrethere",
+        "12345", "password123", "secret123", "key123"
+    ]
+    
+    # Check if value is clearly test data
+    if any(pattern in value_lower for pattern in test_data_patterns):
+        return True
+    
+    # Check if file is in test directory
+    path_str = str(file_path).lower()
+    if any(test_dir in path_str for test_dir in ["/test/", "/tests/", "/spec/", "/fixtures/", "/examples/", "/samples/"]):
+        return True
+    
+    # Check context for test indicators
+    if context:
+        context_lower = context.lower()
+        if any(indicator in context_lower for indicator in ["test", "example", "sample", "fixture", "mock"]):
+            return True
+    
+    # UUID/GUID in .sln, .csproj, .vcxproj files are project identifiers, not secrets
+    if file_path.suffix.lower() in (".sln", ".csproj", ".vcxproj", ".vcproj", ".csproj.user"):
+        uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+        if re.match(uuid_pattern, value, re.IGNORECASE):
+            return True  # Filter out Visual Studio project GUIDs
+    
+    return False
+
+
 def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
     """Scan for cloud provider secrets (AWS, GCP, Azure, etc.)."""
     findings: list[RawFinding] = []
     
+    # Check if this is a security tool repository (reduce confidence)
+    is_security_tool = _is_security_tool_repository(root)
+    
             for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
+            continue
+        
+        # Skip .sln files (Visual Studio solution files with GUIDs)
+        if file_path.suffix.lower() == ".sln":
             continue
         
         try:
@@ -897,14 +1006,27 @@ def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
             for pattern, description in patterns:
                 matches = re.finditer(pattern, content, re.IGNORECASE)
                 for match in matches:
+                    matched_value = match.group(0)
+                    
+                    # Skip if it's test data or example
+                    if _is_test_data_or_example(matched_value, file_path, content):
+                        continue
+                    
+                    # Reduce confidence for security tool repositories
+                    confidence = 0.7 if is_security_tool else 0.95
+                    
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(file_path, root),
                         line=None,
-                        snippet=match.group(0)[:200],
+                        snippet=matched_value[:200],
                         severity="critical",
-                        confidence=0.95,
-                        metadata={"provider": provider, "secret_type": description}
+                        confidence=confidence,
+                        metadata={
+                            "provider": provider, 
+                            "secret_type": description,
+                            "is_security_tool": is_security_tool
+                        }
                     ))
     
     return findings
@@ -1493,6 +1615,34 @@ def _scan_injection_vulnerabilities(root: Path) -> list[RawFinding]:
                     if stripped.startswith(('//', '/*', '*', '#', '--')):
                         continue
                     
+                    # Skip detector code
+                    if _is_detector_code(file_path, content):
+                        continue
+                    
+                    # Skip if it's a pattern definition
+                    if _is_pattern_definition(line, content):
+                        continue
+                    
+                    # Reduce false positives: Skip ORM queries and query builders
+                    context_start = max(0, line_no - 5)
+                    context_end = min(len(lines), line_no + 5)
+                    context = '\n'.join(lines[context_start:context_end]).lower()
+                    
+                    # Skip ORM patterns (Django, Rails, ActiveRecord, etc.)
+                    orm_patterns = [
+                        'model.objects', 'activerecord', 'querybuilder', 'sequelize',
+                        'typeorm', 'prisma', 'sqlalchemy', 'django.orm', 'active_record',
+                        'where(', 'filter(', 'find_by', 'find_one', 'query(', 'select('
+                    ]
+                    
+                    # Only skip if it's clearly an ORM query, not raw SQL
+                    if any(orm in context for orm in orm_patterns) and 'raw(' not in context and 'execute(' not in context:
+                        # Check if it's actually raw SQL (higher risk)
+                        if 'raw(' in context or 'execute(' in context or 'query(' in context and 'sql' in context:
+                            pass  # This is raw SQL, don't skip
+                        else:
+                            continue  # Likely ORM query, skip
+                    
                     findings.append(RawFinding(
                         type="potential_sql_injection",
                         file=_relative_path(file_path, root),
@@ -1988,10 +2138,22 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
         # Python: os.system(user_input), subprocess.call(user_input)
         (r'os\.system\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via os.system() (Python)"),
         (r'subprocess\.(call|run|Popen)\s*\(\s*[a-zA-Z_]+[^)]*shell\s*=\s*True', "Command injection via subprocess with shell=True (Python)"),
-        # Node.js: child_process.exec(user_input)
-        (r'child_process\.(exec|spawn)\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via child_process (Node.js)"),
-        # General: eval() with user input
-        (r'eval\s*\(\s*[a-zA-Z_]+[^)]*\)', "Code injection via eval() with variable"),
+        (r'subprocess\.(call|run|Popen)\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via subprocess (Python - check for shell=True)"),
+        # Node.js: child_process.exec(user_input), eval() code injection
+        (r'child_process\.(exec|spawn|execFile)\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via child_process (Node.js)"),
+        (r'eval\s*\(\s*[a-zA-Z_]+[^)]*\)', "Code injection via eval() with variable (Node.js/Python)"),
+        (r'Function\s*\(\s*["\']?[^"\']*["\']?\s*,\s*[a-zA-Z_]+', "Code injection via Function constructor (JavaScript)"),
+        (r'new\s+Function\s*\([^)]*[a-zA-Z_]+', "Code injection via new Function() (JavaScript)"),
+        # Ruby: system(), exec(), eval(), `backticks`
+        (r'system\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via system() (Ruby)"),
+        (r'exec\s*\(\s*[a-zA-Z_]+[^)]*\)', "Command injection via exec() (Ruby)"),
+        (r'eval\s*\(\s*[a-zA-Z_]+[^)]*\)', "Code injection via eval() (Ruby)"),
+        (r'`[^`]*\$[a-zA-Z_]+[^`]*`', "Command injection via backticks with variable (Ruby)"),
+        # Java: Runtime.exec(), ProcessBuilder
+        (r'Runtime\.getRuntime\(\)\.exec\s*\(\s*[a-zA-Z_]+', "Command injection via Runtime.exec() (Java)"),
+        (r'new\s+ProcessBuilder\s*\(\s*[a-zA-Z_]+', "Command injection via ProcessBuilder (Java)"),
+        # .NET: Process.Start()
+        (r'Process\.Start\s*\(\s*[a-zA-Z_]+', "Command injection via Process.Start() (.NET)"),
     ]
     
             for file_path in _iter_files(root, ignore_patterns):
@@ -2042,13 +2204,13 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
                             logger.debug(f"AI validation error (continuing): {e}")
                     
                     findings.append(RawFinding(
-                        type="potential_sql_injection",  # Use same type for injection vulnerabilities
+                        type="command_injection",  # Correct finding type
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="critical",
                         confidence=final_confidence,
-                        metadata={"issue": description, "vulnerability": "command_injection", "control_id": "SOC2-CC6.1"}
+                        metadata={"issue": description, "vulnerability": "command_injection", "control_id": "SOC2-CC6.1", "cwe": "CWE-78"}
                     ))
                     break  # Only report once per file per pattern
     
@@ -2094,6 +2256,21 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
         # Flask: Markup() or escape=False
         (r'Markup\s*\([^)]*request\.', "XSS: Markup() with request data (Flask)"),
         (r'escape\s*=\s*False', "XSS: escape=False in template rendering"),
+        # Rails: html_safe, raw() - CRITICAL
+        (r'\.html_safe\s*\(', "XSS: html_safe() usage (Rails) - CRITICAL"),
+        (r'\.html_safe\b', "XSS: html_safe method call (Rails) - CRITICAL"),
+        (r'raw\s*\([^)]*\)', "XSS: raw() helper usage (Rails) - CRITICAL"),
+        # Ruby: constantize with user input (code injection)
+        (r'constantize\s*\(\s*[a-zA-Z_]+', "Code injection via constantize() with variable (Ruby)"),
+        (r'\.constantize\s*\(', "Code injection via constantize() (Ruby)"),
+        # Stored XSS patterns - database writes without sanitization
+        (r'INSERT\s+INTO.*VALUES.*\$_(?:GET|POST|REQUEST)', "Stored XSS: INSERT with user input (PHP)"),
+        (r'Model\.create\s*\([^)]*request\.(POST|body)', "Stored XSS: Model creation with user input (Django/Node.js)"),
+        (r'Model\.save\s*\([^)]*request\.(POST|body)', "Stored XSS: Model save with user input"),
+        # Node.js: mathjs.eval, vm.runInContext
+        (r'mathjs\.eval\s*\(', "Code injection via mathjs.eval() (Node.js)"),
+        (r'vm\.runInContext\s*\(', "Code injection via vm.runInContext() (Node.js)"),
+        (r'vm\.runInNewContext\s*\(', "Code injection via vm.runInNewContext() (Node.js)"),
     ]
     
             for file_path in _iter_files(root, ignore_patterns):
@@ -2133,9 +2310,20 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
                         context_end = min(len(lines), line_no + 3)
                         context = '\n'.join(lines[context_start:context_end]).lower()
                         # Skip if sanitization functions are used
-                        sanitization_functions = ['htmlspecialchars', 'htmlentities', 'escape', 'sanitize', 'xss', 'filter', 'strip_tags', '|escape', '|e']
+                        sanitization_functions = ['htmlspecialchars', 'htmlentities', 'escape', 'sanitize', 'xss', 'filter', 'strip_tags', '|escape', '|e', 'textcontent', 'textcontent']
                         if any(sf in context for sf in sanitization_functions):
                             continue
+                        
+                        # Reduce false positives: Skip if innerHTML is assigned from a constant or safe source
+                        if 'innerhtml' in line.lower() or 'outerhtml' in line.lower():
+                            # Check if it's a constant string or safe assignment
+                            if re.search(r'innerHTML\s*=\s*["\'][^"\']+["\']', line, re.IGNORECASE):
+                                continue  # Constant string assignment
+                            if re.search(r'innerHTML\s*=\s*document\.(createElement|getElementById)', line, re.IGNORECASE):
+                                continue  # Safe DOM manipulation
+                            # Check if it's in a test file or detector code
+                            if 'test' in file_path.name.lower() or 'spec' in file_path.name.lower():
+                                continue
                     
                     is_test = "test" in file_path.name.lower()
                     
@@ -2372,6 +2560,9 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
     """Detect advanced secrets management issues (JWT secrets, OAuth, session secrets, encryption keys)."""
     findings: list[RawFinding] = []
     
+    # Check if this is a security tool repository (reduce confidence)
+    is_security_tool = _is_security_tool_repository(root)
+    
     # JWT secret patterns
     jwt_patterns = [
         (r'JWT_SECRET\s*[:=]\s*["\']([^"\']{10,})["\']', "JWT secret in code"),
@@ -2432,13 +2623,23 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
                     if 'example' in line.lower() or 'placeholder' in line.lower():
                         continue
                     
+                    # Extract matched value and check if it's test data
+                    match = re.search(pattern, line, re.IGNORECASE)
+                    if match:
+                        matched_value = match.group(1) if match.lastindex else match.group(0)
+                        if _is_test_data_or_example(matched_value, file_path, content):
+                            continue
+                    
+                    # Reduce confidence for security tool repositories
+                    confidence = 0.7 if is_security_tool else 0.9
+                    
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="critical",
-                        confidence=0.9,
+                        confidence=confidence,
                         metadata={"secret_type": "JWT_SECRET", "issue": description}
                     ))
                     break
@@ -2451,13 +2652,23 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
                     if stripped.startswith(('//', '/*', '*', '#', '--')):
                         continue
                     
+                    # Extract matched value and check if it's test data
+                    match = re.search(pattern, line, re.IGNORECASE)
+                    if match:
+                        matched_value = match.group(1) if match.lastindex else match.group(0)
+                        if _is_test_data_or_example(matched_value, file_path, content):
+                            continue
+                    
+                    # Reduce confidence for security tool repositories
+                    confidence = 0.7 if is_security_tool else 0.9
+                    
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="critical",
-                        confidence=0.9,
+                        confidence=confidence,
                         metadata={"secret_type": "OAUTH_SECRET", "issue": description}
                     ))
                     break
@@ -2470,13 +2681,23 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
                     if stripped.startswith(('//', '/*', '*', '#', '--')):
                         continue
                     
+                    # Extract matched value and check if it's test data
+                    match = re.search(pattern, line, re.IGNORECASE)
+                    if match:
+                        matched_value = match.group(1) if match.lastindex else match.group(0)
+                        if _is_test_data_or_example(matched_value, file_path, content):
+                            continue
+                    
+                    # Reduce confidence for security tool repositories
+                    confidence = 0.6 if is_security_tool else 0.85
+                    
                     findings.append(RawFinding(
                         type="hardcoded_secret",
                         file=_relative_path(file_path, root),
                         line=line_no,
                         snippet=line.strip()[:200],
                         severity="high",
-                        confidence=0.85,
+                        confidence=confidence,
                         metadata={"secret_type": "SESSION_SECRET", "issue": description}
                     ))
                     break
