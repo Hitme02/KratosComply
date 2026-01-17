@@ -906,8 +906,6 @@ def _scan_text_file(path: Path, root: Path) -> list[RawFinding]:
                                 snippet=line.strip()[:200],
                                 severity="high",
                                 confidence=confidence,
-                                severity="high",
-                                confidence=0.9,
                                 metadata={"file_type": suffix}
                             )
                         )
@@ -989,7 +987,7 @@ def _scan_cloud_secrets(root: Path) -> list[RawFinding]:
     # Check if this is a security tool repository (reduce confidence)
     is_security_tool = _is_security_tool_repository(root)
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -1487,7 +1485,7 @@ def _scan_weak_encryption(root: Path) -> list[RawFinding]:
         (r"context\.verify_mode\s*=\s*ssl\.CERT_NONE", "SSL certificate verification disabled"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -1591,7 +1589,7 @@ def _scan_injection_vulnerabilities(root: Path) -> list[RawFinding]:
         (r'\.find\s*\(\s*\{[^}]*[a-zA-Z_]+[^}]*\+', "String concatenation in MongoDB find query object"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -1701,7 +1699,7 @@ def _scan_weak_authentication(root: Path) -> list[RawFinding]:
         (r'app\.config\[["\']SECRET_KEY["\']\]\s*=\s*["\']([^"\']{10,})["\']', "Flask SECRET_KEY hardcoded in config"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -1811,7 +1809,7 @@ def _scan_missing_logging(root: Path) -> list[RawFinding]:
         r'Logger\.',
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2060,7 +2058,7 @@ def _scan_missing_logging(root: Path) -> list[RawFinding]:
         r'Logger\.',
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2156,7 +2154,7 @@ def _scan_command_injection(root: Path) -> list[RawFinding]:
         (r'Process\.Start\s*\(\s*[a-zA-Z_]+', "Command injection via Process.Start() (.NET)"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2273,7 +2271,7 @@ def _scan_xss_vulnerabilities(root: Path) -> list[RawFinding]:
         (r'vm\.runInNewContext\s*\(', "Code injection via vm.runInNewContext() (Node.js)"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2392,7 +2390,7 @@ def _scan_debug_mode(root: Path) -> list[RawFinding]:
         (r'environment\s*=\s*["\']development["\']', "Environment set to development"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2463,7 +2461,7 @@ def _scan_insecure_cookies(root: Path) -> list[RawFinding]:
         (r'res\.cookie\s*\([^)]*\)(?!.*httpOnly\s*:\s*true)', "Cookie set without httpOnly flag (Express)"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2599,7 +2597,7 @@ def _scan_advanced_secrets(root: Path) -> list[RawFinding]:
         (r'api[_-]?key["\']?\s*:\s*["\']?[^"\']+["\']?', "API key in object/header"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2778,7 +2776,7 @@ def _scan_authentication_security(root: Path) -> list[RawFinding]:
         (r'@app\.(post|put)\([^)]*["\']/auth["\']', "Auth endpoint without rate limiting"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2882,7 +2880,7 @@ def _scan_access_control_issues(root: Path) -> list[RawFinding]:
         (r'if\s*\(.*user.*\)\s*\{[^}]*delete|update|modify', "Operation without role check"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -2984,7 +2982,7 @@ def _scan_logging_security(root: Path) -> list[RawFinding]:
         (r'log\.(info|error|warn)\([^)]*ssn|social.*security', "SSN in log statement"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -3062,7 +3060,7 @@ def _scan_encryption_security(root: Path) -> list[RawFinding]:
         (r'error\([^)]*password', "Password in error message"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -3149,7 +3147,7 @@ def _scan_insecure_configurations(root: Path) -> list[RawFinding]:
         (r'session.*cookie.*secure\s*=\s*False', "Session cookie not secure"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
@@ -3247,7 +3245,7 @@ def _scan_supply_chain_security(root: Path) -> list[RawFinding]:
         (r'npm.*registry.*http://', "Insecure npm registry"),
     ]
     
-            for file_path in _iter_files(root, ignore_patterns):
+    for file_path in _iter_files(root, ignore_patterns):
         if _should_skip(file_path, ignore_patterns):
             continue
         
