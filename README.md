@@ -153,61 +153,110 @@ Every control resolves to exactly one state:
 
 ```mermaid
 graph TB
-    subgraph "User Environment"
-        A[Developer/Compliance Officer] --> B[KratosComply Frontend]
-        A --> C[Docker Agent]
+    subgraph "Startup/Developer Workspace"
+        Codebase["Codebase & IaC<br/>• Source Code<br/>• Terraform/K8s<br/>• Dockerfile<br/>• Config Files<br/>• Logs"]
+        Keystore["User Keystore<br/>(Local ed25519 keys)"]
     end
-    
-    subgraph "Frontend Layer"
-        B --> D[React + TypeScript]
-        D --> E[Vite Dev Server]
-        D --> F[shadcn/ui Components]
+
+    subgraph "Local Docker Agent (Offline Mode)"
+        InputCollector["Input Collector<br/>Reads files locally"]
+        Preprocessor["Preprocessor & Parsers<br/>• AST (Python/JS/Java)<br/>• YAML/JSON<br/>• Dependency Analysis"]
+        
+        subgraph "Detectors & AI Analyzers"
+            StaticAnalyzers["Static Analyzers<br/>• AST Rules<br/>• Regex Patterns<br/>• 500+ Detection Rules<br/>• Parallel Processing"]
+            MLClassifiers["AI Validator<br/>• Sentence Transformers<br/>• 500+ Pattern DB<br/>• Top-K Ensemble<br/>• False Positive Reduction<br/>• UUID/GUID Filtering"]
+            VulnerabilityDetectors["Vulnerability Detectors<br/>• XSS, SQL Injection<br/>• Command Injection<br/>• XXE, SSRF<br/>• Path Traversal<br/>• Crypto Misuse<br/>• DEBUG Mode<br/>• Insecure Cookies"]
+        end
+        
+        ComplianceEngine["Compliance Engine<br/>• SOC2 Mapping<br/>• GDPR Mapping<br/>• ISO27001 Mapping<br/>• HIPAA/PCI-DSS<br/>• DPDP Act<br/>• Control State Machine"]
+        
+        PatchGenerator["Patch Generator<br/>(Diff / PR draft)"]
+        SandboxTester["Sandbox Tester<br/>• Unit Tests<br/>• Terraform Plan<br/>• Validation"]
+        
+        SigningMerkle["Signing & Merkle<br/>• Build Evidence<br/>• SHA256 Merkle Tree<br/>• Ed25519 Signature"]
+        
+        ReportOutput["Signed Report JSON<br/>+ Merkle Root<br/>(local)"]
     end
-    
-    subgraph "Backend Layer"
-        E --> G[FastAPI Backend]
-        G --> H[SQLite/PostgreSQL]
-        G --> I[GitHub OAuth]
-        G --> J[Ephemeral Workers]
+
+    subgraph "GitHub Connected Mode (Online Worker)"
+        GitHubToken["GitHub Token<br/>(OAuth)"]
+        GitHubRepo["GitHub Private Repo"]
+        EphemeralWorker["Ephemeral Worker<br/>• Clone Repo<br/>• Run Agent Pipeline<br/>• Destroy Workspace<br/>(Code Never Persisted)"]
     end
-    
-    subgraph "Agent Layer"
-        C --> K[Compliance Scanner]
-        K --> L[AST Parser]
-        K --> M[Regex Detectors]
-        K --> N[System Evidence Collector]
-        K --> O[Report Generator]
-        O --> P[Ed25519 Signer]
-        O --> Q[Merkle Tree Builder]
+
+    subgraph "KratosComply Backend (Optional)"
+        Upload["Upload Report"]
+        VerifySig["Verify Signature & Merkle<br/>• Ed25519 Verification<br/>• Merkle Root Validation<br/>• Report Integrity Check"]
+        AttestationService["Attestation Service<br/>• SQLite/PostgreSQL<br/>• Immutable Ledger<br/>• Timestamped Records"]
+        Dashboard["Dashboard & Insights<br/>• Findings View<br/>• Risk Assessment<br/>• Compliance Status<br/>• Attestation History"]
     end
-    
-    subgraph "Compliance Frameworks"
-        K --> R[SOC2]
-        K --> S[ISO27001]
-        K --> T[GDPR]
-        K --> U[DPDP]
-        K --> V[HIPAA]
-        K --> W[PCI-DSS]
-        K --> X[NIST-CSF]
+
+    subgraph "Frontend (React/TypeScript)"
+        LandingPage["Landing Page<br/>• Introduction<br/>• Mode Selection"]
+        DockerSetup["Docker Setup<br/>• Instructions<br/>• Commands"]
+        GitHubRepos["GitHub Repos<br/>• Repository Selection<br/>• OAuth Flow"]
+        MainDashboard["Main Dashboard<br/>• Report Upload<br/>• Verification Panel<br/>• Compliance Summary<br/>• Charts & Visualizations"]
+        Attestations["Attestations Page<br/>• History View<br/>• Download/Share"]
     end
+
+    %% Workflow connections
+    Codebase -->|mounts| InputCollector
+    Keystore -.->|signing key| SigningMerkle
     
-    subgraph "Evidence Types"
-        N --> Y[Machine-Verified]
-        N --> Z[System-Verified]
-        N --> AA[Human-Attested]
-    end
+    InputCollector --> Preprocessor
+    Preprocessor --> StaticAnalyzers
+    Preprocessor --> MLClassifiers
+    Preprocessor --> VulnerabilityDetectors
     
-    style A fill:#e1f5ff
-    style B fill:#fff4e6
-    style G fill:#f3e5f5
-    style K fill:#e8f5e9
-    style R fill:#ffebee
-    style S fill:#ffebee
-    style T fill:#ffebee
-    style U fill:#ffebee
-    style V fill:#ffebee
-    style W fill:#ffebee
-    style X fill:#ffebee
+    StaticAnalyzers --> ComplianceEngine
+    MLClassifiers -->|validates| ComplianceEngine
+    VulnerabilityDetectors --> ComplianceEngine
+    
+    ComplianceEngine -->|fails| PatchGenerator
+    ComplianceEngine -->|passes| SandboxTester
+    
+    PatchGenerator --> SigningMerkle
+    SandboxTester --> SigningMerkle
+    MLClassifiers -.->|review| SigningMerkle
+    
+    SigningMerkle --> ReportOutput
+    
+    %% GitHub OAuth Flow
+    GitHubToken --> GitHubRepo
+    GitHubRepo --> EphemeralWorker
+    EphemeralWorker -->|same pipeline| Preprocessor
+    EphemeralWorker -->|generates| ReportOutput
+    
+    %% Backend Flow
+    ReportOutput -->|upload| Upload
+    Upload --> VerifySig
+    VerifySig --> AttestationService
+    AttestationService --> Dashboard
+    
+    %% Frontend Flow
+    LandingPage -->|Offline Mode| DockerSetup
+    LandingPage -->|GitHub Mode| GitHubRepos
+    DockerSetup -.->|user follows| Codebase
+    GitHubRepos -->|triggers| EphemeralWorker
+    ReportOutput -->|upload| MainDashboard
+    MainDashboard -->|verify| VerifySig
+    MainDashboard -->|create attestation| AttestationService
+    AttestationService --> Attestations
+    
+    %% Styling
+    classDef workspace fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#fff
+    classDef agent fill:#fbbf24,stroke:#d97706,stroke-width:2px,color:#000
+    classDef github fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff
+    classDef backend fill:#a855f7,stroke:#7c3aed,stroke-width:2px,color:#fff
+    classDef frontend fill:#ec4899,stroke:#be185d,stroke-width:2px,color:#fff
+    classDef critical fill:#ef4444,stroke:#dc2626,stroke-width:3px,color:#fff
+    
+    class Codebase,Keystore workspace
+    class InputCollector,Preprocessor,StaticAnalyzers,MLClassifiers,VulnerabilityDetectors,ComplianceEngine,PatchGenerator,SandboxTester,SigningMerkle,ReportOutput agent
+    class GitHubToken,GitHubRepo,EphemeralWorker github
+    class Upload,VerifySig,AttestationService,Dashboard backend
+    class LandingPage,DockerSetup,GitHubRepos,MainDashboard,Attestations frontend
+    class SigningMerkle,VerifySig,AttestationService critical
 ```
 
 ### Data Flow
