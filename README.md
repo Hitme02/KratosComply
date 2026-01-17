@@ -861,5 +861,4 @@ For issues, questions, or contributions, please open an issue on the repository.
 
 **KratosComply** - Making compliance verifiable, one control at a time.
 
-**Current Version**: 2.2.0 | **Docker Image**: `popslala1/kratos-agent:latest` | **Multi-Arch**: AMD64 + ARM64
-
+**Current Version**: 2.7.0 | **Docker Image**: `popslala1/kratos-agent:latest` | **Multi-Arch**: AMD64 + ARM64
