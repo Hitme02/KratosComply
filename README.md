@@ -12,6 +12,9 @@ KratosComply is a compliance-first, privacy-preserving audit automation platform
 
 **Core Philosophy**: Compliance includes security. Every detection maps to a specific compliance control, legal requirement, or audit verifiability requirement.
 
+## Video Demo (Screen Recording)
+<video src="https://github.com/user-attachments/assets/90ffe3c4-2367-4e19-9ad1-0d457df08e2e" controls="controls" muted autoPlay loop></video>
+
 ## What's New in v2.7.0
 
 ### 🤖 Enhanced AI Validation
